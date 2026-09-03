@@ -22,6 +22,8 @@ internal sealed class DeliveryCoordinator
     private readonly TaskNavigationService navigation;
     private readonly IMonitor monitor;
     private readonly Dictionary<CompanionIdentity, DeliveryTask> tasks = new();
+    private readonly Dictionary<CompanionIdentity, string> pendingReturns = new();
+    private ulong currentTick;
 
     public DeliveryCoordinator(CompanionRegistry registry, CompanionBodyBinder bodies, CompanionInventoryStore inventories, CompanionAppearanceCoordinator appearance, TaskExecutionService execution, TaskNavigationService navigation, IMonitor monitor)
     {
@@ -36,23 +38,29 @@ internal sealed class DeliveryCoordinator
 
     public void Update(ulong tick)
     {
+        this.currentTick = tick;
         foreach (DeliveryTask task in this.tasks.Values.ToArray())
             this.UpdateOne(task, tick);
         if (tick % 60 != 0)
             return;
         foreach (CompanionRecord record in this.registry.Active)
+        {
+            this.NormalizeRetryClock(record, tick);
+            this.TryReturnPending(record, tick);
             this.TryActivate(record, tick);
+        }
     }
 
     public void Cancel(CompanionIdentity identity, string code)
     {
+        this.pendingReturns.Remove(identity);
         if (!this.tasks.TryGetValue(identity, out DeliveryTask? task))
             return;
         if (DeliveryPhases.OwnsEscrow(task.Delivery.Phase))
         {
             task.Delivery.Phase = DeliveryPhases.Escrowed;
             task.Delivery.LastFailure = code;
-            task.Delivery.NextAttemptTick = unchecked((ulong)Game1.ticks) + RetryDelayTicks;
+            task.Delivery.NextAttemptTick = RetryAt(this.currentTick);
         }
         this.appearance.Fail(identity, task.Session.OperationId, code);
         this.execution.Complete(task.Session, false, code, "Automatic delivery stopped before handoff; exact cargo remains in Escrow.");
@@ -61,14 +69,74 @@ internal sealed class DeliveryCoordinator
 
     public void CancelAll(string code)
     {
+        this.pendingReturns.Clear();
         foreach (CompanionIdentity identity in this.tasks.Keys.ToArray())
             this.Cancel(identity, code);
+    }
+
+    private void NormalizeRetryClock(CompanionRecord record, ulong tick)
+    {
+        ulong latestReasonableRetry = RetryAt(tick);
+        foreach (DeliveryRecord delivery in record.Deliveries.Where(candidate => DeliveryPhases.OwnsEscrow(candidate.Phase)))
+        {
+            if (delivery.NextAttemptTick > latestReasonableRetry)
+                delivery.NextAttemptTick = tick;
+        }
+    }
+
+    private void TryReturnPending(CompanionRecord record, ulong tick)
+    {
+        if (this.pendingReturns.ContainsKey(record.Identity)
+            || this.tasks.ContainsKey(record.Identity)
+            || !string.IsNullOrWhiteSpace(record.ActiveTransactionId))
+            return;
+
+        DeliveryRecord? delivery = record.Deliveries
+            .Where(candidate => candidate.Phase == DeliveryPhases.Returning && candidate.NextAttemptTick <= tick)
+            .OrderBy(candidate => candidate.CreatedTick)
+            .ThenBy(candidate => candidate.DeliveryId, StringComparer.Ordinal)
+            .FirstOrDefault();
+        if (delivery is null)
+            return;
+
+        string deliveryId = delivery.DeliveryId;
+        this.pendingReturns.Add(record.Identity, deliveryId);
+        this.inventories.RequestTransfer(record.Identity, () =>
+        {
+            if (!this.pendingReturns.TryGetValue(record.Identity, out string? pendingId)
+                || !string.Equals(pendingId, deliveryId, StringComparison.Ordinal)
+                || !this.registry.TryGet(record.Identity, out CompanionRecord current)
+                || !ReferenceEquals(current, record)
+                || !string.IsNullOrWhiteSpace(record.ActiveTransactionId)
+                || this.tasks.ContainsKey(record.Identity)
+                || delivery.Phase != DeliveryPhases.Returning)
+                return InventoryActionResult.Failure("DELIVERY-RETURN-CONTEXT-CHANGED", "Automatic delivery return context changed before the bag lock was acquired.");
+            return this.inventories.ReturnDeliveryLocked(record, deliveryId);
+        }, result =>
+        {
+            if (!this.pendingReturns.TryGetValue(record.Identity, out string? pendingId)
+                || !string.Equals(pendingId, deliveryId, StringComparison.Ordinal))
+                return;
+            this.pendingReturns.Remove(record.Identity);
+            if (result.IsSuccess)
+            {
+                this.monitor.Log($"HY-DELIVERY-{result.Code}: {result.Message}", LogLevel.Info);
+                return;
+            }
+            if (delivery.Phase == DeliveryPhases.Returning)
+            {
+                delivery.LastFailure = result.Message;
+                delivery.NextAttemptTick = RetryAt(this.currentTick);
+            }
+            this.monitor.Log($"HY-DELIVERY-{result.Code}: {result.Message}", LogLevel.Warn);
+        });
     }
 
     private void TryActivate(CompanionRecord record, ulong tick)
     {
         if (Game1.GetPlayer(record.OwnerId, onlyOnline: true) is null
             || this.tasks.ContainsKey(record.Identity)
+            || this.pendingReturns.ContainsKey(record.Identity)
             || !string.IsNullOrWhiteSpace(record.ActiveTransactionId))
             return;
         DeliveryRecord? delivery = record.Deliveries
@@ -201,7 +269,7 @@ internal sealed class DeliveryCoordinator
         {
             task.Delivery.Phase = DeliveryPhases.Escrowed;
             task.Delivery.LastFailure = message;
-            task.Delivery.NextAttemptTick = tick + RetryDelayTicks;
+            task.Delivery.NextAttemptTick = RetryAt(tick);
         }
         this.appearance.Fail(task.Session.Identity, task.Session.OperationId, code);
         this.execution.Complete(task.Session, false, code, message);
@@ -224,6 +292,8 @@ internal sealed class DeliveryCoordinator
     }
 
     private static int ManhattanDistance(Point left, Point right) => Math.Abs(left.X - right.X) + Math.Abs(left.Y - right.Y);
+
+    private static ulong RetryAt(ulong tick) => tick > ulong.MaxValue - RetryDelayTicks ? ulong.MaxValue : tick + RetryDelayTicks;
 
     private sealed class DeliveryTask
     {
