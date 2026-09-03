@@ -26,7 +26,8 @@ internal sealed class CraftingCoordinator
     private readonly IMonitor monitor;
     private readonly Dictionary<CompanionIdentity, ChestCraftSession> chestSessions = new();
     private readonly HashSet<CompanionIdentity> reconciliationPending = new();
-    private readonly HashSet<CompanionIdentity> startPending = new();
+    private readonly Dictionary<CompanionIdentity, PendingBagCraftStart> pendingBagStarts = new();
+    private ulong lifecycleGeneration;
     private ulong currentTick;
 
     public CraftingCoordinator(CompanionRegistry registry, CompanionInventoryStore inventories, CompanionBodyBinder bodies, CompanionStorageCoordinator storage, CompanionAppearanceCoordinator appearance, IMonitor monitor)
@@ -100,6 +101,8 @@ internal sealed class CraftingCoordinator
                 : CraftActionResult.Failure("CRAFT-BUSY", $"{identity} already owns craft {record.CraftTransaction.CraftId}.");
         if (!string.IsNullOrWhiteSpace(record.ActiveTransactionId))
             return CraftActionResult.Failure("COMPANION-BUSY", $"{identity} is already executing {record.ActiveTransactionId}.");
+        if (this.pendingBagStarts.ContainsKey(identity))
+            return CraftActionResult.Failure("CRAFT-START-PENDING", "A crafting request is already waiting for the Yui bag lock.");
 
         CraftRecipeResolution resolution = this.policy.TryResolve(owner, recipeKey);
         if (!resolution.IsSuccess || resolution.Recipe is null)
@@ -107,8 +110,6 @@ internal sealed class CraftingCoordinator
         CraftRecipeDescriptor recipe = resolution.Recipe;
         if (!HasMaterials(this.inventories.Get(identity), recipe.Ingredients, craftCount))
             return this.StartChestCraft(record, owner, recipe, craftCount, operationId);
-        if (!this.startPending.Add(identity))
-            return CraftActionResult.Failure("CRAFT-START-PENDING", "A crafting request is already waiting for the Yui bag lock.");
         string craftId = Guid.NewGuid().ToString("N");
         var transaction = new CraftTransactionRecord
         {
@@ -125,15 +126,20 @@ internal sealed class CraftingCoordinator
         if (this.bodies.TryGetBody(identity, out NPC craftBody))
             this.appearance.Prepare(identity, operationId, AppearanceActionKinds.Crafting, null, craftBody.FacingDirection);
 
+        var pendingStart = new PendingBagCraftStart(record, operationId, this.lifecycleGeneration);
+        this.pendingBagStarts.Add(identity, pendingStart);
+
         CraftActionResult immediate = CraftActionResult.Success("CRAFT-LOCK-QUEUED", $"Craft {craftId} is waiting for the Yui bag lock.");
         this.inventories.RequestTransfer(identity, () =>
         {
+            if (!this.IsCurrentPendingStart(identity, pendingStart))
+                return InventoryActionResult.Failure("CRAFT-START-CANCELLED", "The queued crafting request was cancelled before the Yui bag lock was acquired.");
             CraftActionResult result = this.CommitSingleBagCraft(record, owner, recipe, transaction);
             return new InventoryActionResult(result.IsSuccess, result.Code, result.Message);
         }, result =>
         {
-            this.startPending.Remove(identity);
-            if (!result.IsSuccess)
+            this.RemovePendingStartIfCurrent(identity, pendingStart);
+            if (!result.IsSuccess && result.Code != "CRAFT-START-CANCELLED")
                 this.monitor.Log($"HY-CRAFT-{result.Code}: {identity} {result.Message}", LogLevel.Warn);
         });
         return immediate;
@@ -168,17 +174,31 @@ internal sealed class CraftingCoordinator
 
     public void SuspendAll(string reason)
     {
+        this.lifecycleGeneration++;
+        foreach ((CompanionIdentity identity, PendingBagCraftStart pending) in this.pendingBagStarts.ToArray())
+        {
+            TaskReceiptStore.Add(pending.Record, pending.OperationId, false, "CRAFT-CANCELLED", $"Craft was cancelled before the Yui bag lock was acquired ({reason}).");
+            this.appearance.Clear(identity, reason);
+        }
+        this.pendingBagStarts.Clear();
         foreach (ChestCraftSession session in this.chestSessions.Values.ToArray())
             this.FailChestSession(session, reason);
         this.chestSessions.Clear();
         this.reconciliationPending.Clear();
-        this.startPending.Clear();
     }
 
     public CraftActionResult Cancel(CompanionIdentity identity)
     {
         if (!this.registry.TryGet(identity, out CompanionRecord? record))
             return CraftActionResult.Failure("IDENTITY-NOT-FOUND", $"{identity} does not exist; summon it first.");
+        if (this.pendingBagStarts.TryGetValue(identity, out PendingBagCraftStart? pending)
+            && ReferenceEquals(pending.Record, record))
+        {
+            this.pendingBagStarts.Remove(identity);
+            this.appearance.Clear(identity, "PLAYER-CANCELLED");
+            TaskReceiptStore.Add(record, pending.OperationId, false, "CRAFT-CANCELLED", "Craft was cancelled before the Yui bag lock was acquired.");
+            return CraftActionResult.Success("CRAFT-CANCELLED", "The crafting request waiting for the Yui bag lock was cancelled.");
+        }
         if (record.CraftTransaction is null)
             return CraftActionResult.Success("CRAFT-IDLE", "There is no active crafting responsibility to cancel.");
         if (!CraftPhases.CanCancel(record.CraftTransaction.Phase))
@@ -307,6 +327,13 @@ internal sealed class CraftingCoordinator
             escrow.Clear();
             transaction.Phase = CraftPhases.MaterialsConsumed;
             ApplyOwnerProgress(owner, transaction);
+            if (!this.TryReleaseOutputResponsibility(identity, transaction, out string releaseFailure))
+            {
+                transaction.Phase = CraftPhases.Reconciling;
+                transaction.LastFailure = releaseFailure;
+                record.ActiveTransactionId = null;
+                return CraftActionResult.Failure("CRAFT-OUTPUT-RECONCILE", "Craft output exists, but its terminal responsibility tags could not be released safely.");
+            }
             transaction.Phase = CraftPhases.Completed;
             record.ActiveTransactionId = null;
             TaskReceiptStore.Add(record, transaction.OperationId, true, "CRAFT-COMPLETED", $"Crafted {transaction.RecipeKey} {transaction.CompletedCount}/{transaction.CraftCount}; outputs ended in {lastLocation}.");
@@ -553,6 +580,13 @@ internal sealed class CraftingCoordinator
         escrow.Clear();
         transaction.Phase = CraftPhases.MaterialsConsumed;
         ApplyOwnerProgress(session.Owner, transaction);
+        if (!this.TryReleaseOutputResponsibility(session.Record.Identity, transaction, out string releaseFailure))
+        {
+            transaction.Phase = CraftPhases.Reconciling;
+            transaction.LastFailure = releaseFailure;
+            session.Record.ActiveTransactionId = null;
+            return CraftActionResult.Failure("CRAFT-OUTPUT-RECONCILE", "Craft output exists, but its terminal responsibility tags could not be released safely.");
+        }
         transaction.Phase = CraftPhases.Completed;
         session.Record.ActiveTransactionId = null;
         TaskReceiptStore.Add(session.Record, transaction.OperationId, true, "CRAFT-COMPLETED", $"Crafted {transaction.RecipeKey} {transaction.CompletedCount}/{transaction.CraftCount}; output={lastLocation}.");
@@ -751,6 +785,12 @@ internal sealed class CraftingCoordinator
         transaction.Phase = CraftPhases.MaterialsConsumed;
         if (!transaction.ProgressApplied)
             ApplyOwnerProgress(owner, transaction);
+        if (!this.TryReleaseOutputResponsibility(record.Identity, transaction, out string releaseFailure))
+        {
+            transaction.Phase = CraftPhases.Faulted;
+            transaction.LastFailure = releaseFailure;
+            return false;
+        }
         transaction.LastFailure = failure;
         record.ActiveTransactionId = null;
         TaskReceiptStore.Add(record, transaction.OperationId, false, "CRAFT-PARTIAL", $"Crafted {transaction.CompletedCount}/{transaction.CraftCount}; unused real materials returned after {failure}.");
@@ -821,6 +861,13 @@ internal sealed class CraftingCoordinator
             transaction.Phase = CraftPhases.MaterialsConsumed;
             if (!transaction.ProgressApplied)
                 ApplyOwnerProgress(owner, transaction);
+            if (!this.TryReleaseOutputResponsibility(record.Identity, transaction, out string releaseFailure))
+            {
+                transaction.Phase = CraftPhases.Reconciling;
+                transaction.LastFailure = releaseFailure;
+                record.ActiveTransactionId = null;
+                return InventoryActionResult.Failure("CRAFT-OUTPUT-RECONCILE", "Persisted craft output responsibility could not be released safely.");
+            }
             transaction.Phase = CraftPhases.Completed;
             record.ActiveTransactionId = null;
             TaskReceiptStore.Add(record, transaction.OperationId, true, "CRAFT-RECONCILED", $"Reconciled {transaction.RecipeKey} {transaction.CompletedCount}/{transaction.CraftCount} from persisted OutputTokens.");
@@ -829,7 +876,62 @@ internal sealed class CraftingCoordinator
         }, _ => this.reconciliationPending.Remove(record.Identity));
     }
 
+    private bool IsCurrentPendingStart(CompanionIdentity identity, PendingBagCraftStart pending) =>
+        pending.LifecycleGeneration == this.lifecycleGeneration
+        && this.pendingBagStarts.TryGetValue(identity, out PendingBagCraftStart? current)
+        && ReferenceEquals(current, pending)
+        && this.registry.TryGet(identity, out CompanionRecord? currentRecord)
+        && ReferenceEquals(currentRecord, pending.Record);
+
+    private void RemovePendingStartIfCurrent(CompanionIdentity identity, PendingBagCraftStart pending)
+    {
+        if (this.pendingBagStarts.TryGetValue(identity, out PendingBagCraftStart? current)
+            && ReferenceEquals(current, pending))
+            this.pendingBagStarts.Remove(identity);
+    }
+
+    private bool TryReleaseOutputResponsibility(CompanionIdentity identity, CraftTransactionRecord transaction, out string failure)
+    {
+        HashSet<string> expectedTokens = transaction.OutputTokens.ToHashSet(StringComparer.Ordinal);
+        if (transaction.CompletedCount <= 0 || expectedTokens.Count != transaction.CompletedCount)
+        {
+            failure = "CRAFT-OUTPUT-TOKEN-LEDGER-MISMATCH";
+            return false;
+        }
+
+        Inventory[] containers =
+        {
+            this.inventories.Get(identity),
+            Game1.player.team.GetOrCreateGlobalInventory(CompanionInventoryStore.GetPendingOutputNamespace(identity)),
+            Game1.player.team.GetOrCreateGlobalInventory(CompanionInventoryStore.GetRecoveryVaultNamespace(identity)),
+        };
+        Item[] outputs = containers
+            .SelectMany(container => container)
+            .OfType<Item>()
+            .Where(item => item.modData.TryGetValue(CompanionInventoryStore.CraftOutputTokenTag, out string? token)
+                && expectedTokens.Contains(token))
+            .ToArray();
+        bool exact = outputs.Length == expectedTokens.Count
+            && outputs.All(item => item.modData.GetValueOrDefault(CompanionInventoryStore.CraftIdTag) == transaction.CraftId)
+            && outputs.Select(item => item.modData[CompanionInventoryStore.CraftOutputTokenTag]).Distinct(StringComparer.Ordinal).Count() == expectedTokens.Count;
+        if (!exact)
+        {
+            failure = "CRAFT-OUTPUT-RESPONSIBILITY-MISMATCH";
+            return false;
+        }
+
+        foreach (Item output in outputs)
+        {
+            output.modData.Remove(CompanionInventoryStore.CraftIdTag);
+            output.modData.Remove(CompanionInventoryStore.CraftOutputTokenTag);
+        }
+        failure = string.Empty;
+        return true;
+    }
+
     private static int Manhattan(Vector2 first, Vector2 second) => (int)(Math.Abs(first.X - second.X) + Math.Abs(first.Y - second.Y));
+
+    private sealed record PendingBagCraftStart(CompanionRecord Record, string OperationId, ulong LifecycleGeneration);
 
     private sealed class PlannedCraftSource
     {
