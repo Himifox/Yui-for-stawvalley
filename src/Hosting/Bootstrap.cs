@@ -618,20 +618,24 @@ internal sealed class Bootstrap
         {
             CompanionIdentity identity = record.Identity;
             if (record.ActiveTransactionId is not null
-                || this.inventories.PendingOutputCount(identity) == 0
+                || (this.inventories.PendingOutputCount(identity) == 0 && this.inventories.RecoveryVaultCount(identity) == 0)
                 || this.inventories.Count(identity) >= CompanionInventoryStore.Capacity
                 || !this.pendingOutputDrains.Add(identity))
                 continue;
 
             this.inventories.RequestTransfer(
                 identity,
-                () => this.State == LifecycleState.SaveReady && this.saveDataWritable && Context.IsMainPlayer
+                () => this.State == LifecycleState.SaveReady
+                    && this.saveDataWritable
+                    && Context.IsMainPlayer
+                    && this.registry.TryGet(identity, out CompanionRecord current)
+                    && ReferenceEquals(current, record)
                     ? this.inventories.DrainPendingOutputsLocked(record)
                     : InventoryActionResult.Failure("LIFECYCLE-CLOSED", "Pending Output drain was cancelled before commit because the authoritative lifecycle closed."),
                 result =>
                 {
                     this.pendingOutputDrains.Remove(identity);
-                    if (result.Code == "PENDING-DRAINED")
+                    if (result.Code == "OUTPUTS-DRAINED")
                         this.monitor.Log($"HY-OUTPUT-{result.Code}: {identity} {result.Message}", LogLevel.Info);
                     else if (!result.IsSuccess)
                         this.monitor.Log($"HY-OUTPUT-{result.Code}: {identity} {result.Message}", LogLevel.Warn);

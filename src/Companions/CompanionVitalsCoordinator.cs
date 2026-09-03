@@ -345,7 +345,10 @@ internal sealed class CompanionVitalsCoordinator
             return VitalActionResult.Failure("BODY-UNAVAILABLE", "The Yui must be summoned to eat.");
 
         Inventory bag = this.inventories.Get(identity);
-        int index = oneBasedBagSlot is null ? FindFoodIndex(bag) : oneBasedBagSlot.Value - 1;
+        int index = FindFoodIndex(bag);
+        if (oneBasedBagSlot is not null
+            && !this.inventories.TryResolveRegularSlot(identity, oneBasedBagSlot.Value, out index, out _))
+            index = -1;
         if (index < 0 || index >= bag.Count || bag[index] is not SObject food || !TryReadFood(food, out int staminaGain, out int healthGain))
             return VitalActionResult.Failure("ELIGIBLE-FOOD-NOT-FOUND", "The selected Yui bag slot does not contain a positive-recovery edible Object without another responsibility.");
         if (vitals.Health >= vitals.MaxHealth && vitals.Stamina >= vitals.MaxStamina)

@@ -504,7 +504,7 @@ internal sealed class CompanionCommands
         if (operation == "list")
         {
             IReadOnlyList<string> lines = this.inventories.Describe(identity);
-            this.Log(true, "BAG", $"{identity} bag has {lines.Count}/{CompanionInventoryStore.Capacity} real stack(s), namespace={CompanionInventoryStore.GetNamespace(identity)}.");
+            this.Log(true, "BAG", $"{identity} bag has {lines.Count}/{CompanionInventoryStore.Capacity} regular stack(s), pending={this.inventories.PendingOutputCount(identity)}, recovery={this.inventories.RecoveryVaultCount(identity)}, namespace={CompanionInventoryStore.GetNamespace(identity)}.");
             foreach (string line in lines)
                 this.Log(true, "BAG-ITEM", line);
             return;

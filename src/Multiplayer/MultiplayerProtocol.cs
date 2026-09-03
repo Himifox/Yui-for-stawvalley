@@ -478,7 +478,7 @@ internal static class MultiplayerRequestValidator
                     break;
                 case "bagSlot":
                     if (!int.TryParse(value, out int bagSlot) || bagSlot is < 1 or > CompanionInventoryStore.Capacity)
-                        return $"bagSlot must be from 1 through {CompanionInventoryStore.Capacity}.";
+                        return $"bagSlot must identify a regular Yui item from 1 through {CompanionInventoryStore.Capacity}; protected starter tools have no public slot.";
                     break;
                 case "count":
                     if (!int.TryParse(value, out int count) || count is < 1 or > 999)

@@ -68,6 +68,30 @@ internal sealed class CompanionInventoryStore
 
     public bool ContainsExact(CompanionIdentity identity, Item item) => this.Get(identity).Any(candidate => ReferenceEquals(candidate, item));
 
+    public bool TryResolveRegularSlot(CompanionIdentity identity, int oneBasedSlot, out int physicalIndex, out Item? item)
+    {
+        physicalIndex = -1;
+        item = null;
+        if (oneBasedSlot is < 1 or > Capacity)
+            return false;
+
+        Inventory bag = this.Get(identity);
+        int logicalSlot = 0;
+        for (int index = 0; index < bag.Count; index++)
+        {
+            Item? candidate = bag[index];
+            if (candidate is null || IsStarterTool(candidate))
+                continue;
+            logicalSlot++;
+            if (logicalSlot != oneBasedSlot)
+                continue;
+            physicalIndex = index;
+            item = candidate;
+            return true;
+        }
+        return false;
+    }
+
     public bool IsBagLocked(CompanionIdentity identity) => Game1.player.team.GetOrCreateGlobalInventoryMutex(GetNamespace(identity)).IsLocked();
 
     public T? FindFirst<T>(CompanionIdentity identity, Func<T, bool>? predicate = null) where T : Item
@@ -253,14 +277,8 @@ internal sealed class CompanionInventoryStore
             return InventoryActionResult.Failure("BAG-LOCK-REQUIRED", "The Yui bag transfer lock is not held; no transfer occurred.");
 
         Inventory bag = this.Get(identity);
-        int sourceIndex = oneBasedBagSlot - 1;
-        if (sourceIndex < 0 || sourceIndex >= bag.Count)
-            return InventoryActionResult.Failure("INVALID-BAG-SLOT", $"Bag slot must be between 1 and {bag.Count}.");
-        Item? item = bag[sourceIndex];
-        if (item is null)
-            return InventoryActionResult.Failure("BAG-SLOT-EMPTY", $"Bag slot {oneBasedBagSlot} is empty.");
-        if (IsStarterTool(item))
-            return InventoryActionResult.Failure("STARTER-TOOL-PROTECTED", "Yui's built-in starter tools cannot be transferred or removed.");
+        if (!this.TryResolveRegularSlot(identity, oneBasedBagSlot, out int sourceIndex, out Item? item) || item is null)
+            return InventoryActionResult.Failure("INVALID-BAG-SLOT", $"Regular bag slot must be between 1 and {Capacity} and contain an item.");
         if (item.modData.TryGetValue(StorageTags.ResponsibilityId, out string? responsibilityId))
             return InventoryActionResult.Failure("STORAGE-RESPONSIBILITY", $"Return storage responsibility {responsibilityId} through the storage command before taking this item.");
         int destinationIndex = FindEmptyOwnerSlot(owner);
@@ -289,11 +307,14 @@ internal sealed class CompanionInventoryStore
     {
         Inventory bag = this.Get(identity);
         List<string> lines = new();
+        int logicalSlot = 0;
         for (int index = 0; index < bag.Count; index++)
         {
             Item? item = bag[index];
-            if (item is not null)
-                lines.Add($"slot={index + 1}, item={item.QualifiedItemId}, stack={item.Stack}, name={item.DisplayName}");
+            if (item is null || IsStarterTool(item))
+                continue;
+            logicalSlot++;
+            lines.Add($"slot={logicalSlot}, item={item.QualifiedItemId}, stack={item.Stack}, name={item.DisplayName}");
         }
         return lines;
     }
@@ -310,7 +331,7 @@ internal sealed class CompanionInventoryStore
         Inventory destination = this.Count(identity) < Capacity ? bag : pendingOutputs;
         string code = ReferenceEquals(destination, bag) ? "OUTPUT-IN-BAG" : "OUTPUT-PENDING";
         bool pending = ReferenceEquals(destination, pendingOutputs);
-        if (pending && !item.modData.ContainsKey(PendingOutputResponsibilityTag))
+        if (pending)
             item.modData[PendingOutputResponsibilityTag] = Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
         try
         {
@@ -324,8 +345,7 @@ internal sealed class CompanionInventoryStore
 
             try
             {
-                if (pending)
-                    item.modData.Remove(PendingOutputResponsibilityTag);
+                EnsureOutputResponsibility(item);
                 this.GetRecoveryVault(identity).Add(item);
                 return InventoryActionResult.Failure("OUTPUT-IN-RECOVERY", $"Normal output routing failed; the exact stack was retained in Recovery Vault: {ex.Message}");
             }
@@ -340,51 +360,22 @@ internal sealed class CompanionInventoryStore
     {
         CompanionIdentity identity = record.Identity;
         if (!Game1.player.team.GetOrCreateGlobalInventoryMutex(GetNamespace(identity)).IsLockHeld())
-            return InventoryActionResult.Failure("BAG-LOCK-REQUIRED", "Pending Output draining requires the Yui bag lock.");
+            return InventoryActionResult.Failure("BAG-LOCK-REQUIRED", "Pending Output and Recovery Vault draining requires the Yui bag lock.");
 
         Inventory bag = this.Get(identity);
-        Inventory pending = this.GetPendingOutputs(identity);
-        int moved = 0;
-        while (this.Count(identity) < Capacity)
-        {
-            int sourceIndex = pending.ToList().FindIndex(item => item is not null);
-            if (sourceIndex < 0)
-                break;
-            Item item = pending[sourceIndex]!;
-            if (!item.modData.TryGetValue(PendingOutputResponsibilityTag, out string? responsibilityId)
-                || string.IsNullOrWhiteSpace(responsibilityId))
-            {
-                responsibilityId = Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
-                item.modData[PendingOutputResponsibilityTag] = responsibilityId;
-            }
+        int recovered = 0;
+        int pending = 0;
+        InventoryActionResult recoveryResult = this.DrainOutputContainerLocked(record, bag, this.GetRecoveryVault(identity), "recovery", ref recovered);
+        if (!recoveryResult.IsSuccess)
+            return recoveryResult;
+        InventoryActionResult pendingResult = this.DrainOutputContainerLocked(record, bag, this.GetPendingOutputs(identity), "pending", ref pending);
+        if (!pendingResult.IsSuccess)
+            return pendingResult;
 
-            pending.RemoveAt(sourceIndex);
-            try
-            {
-                bag.Add(item);
-            }
-            catch (Exception ex)
-            {
-                if (bag.Any(candidate => ReferenceEquals(candidate, item)))
-                {
-                    item.modData.Remove(PendingOutputResponsibilityTag);
-                    TaskReceiptStore.Add(record, $"pending-drain:{responsibilityId}", true, "PENDING-DRAINED", $"Moved exact stack {item.QualifiedItemId} x{item.Stack} into the Yui bag.");
-                    moved++;
-                    continue;
-                }
-
-                pending.Insert(Math.Min(sourceIndex, pending.Count), item);
-                return InventoryActionResult.Failure("PENDING-DRAIN-ROLLED-BACK", $"Pending Output remained responsible after bag insertion failed: {ex.Message}");
-            }
-
-            item.modData.Remove(PendingOutputResponsibilityTag);
-            TaskReceiptStore.Add(record, $"pending-drain:{responsibilityId}", true, "PENDING-DRAINED", $"Moved exact stack {item.QualifiedItemId} x{item.Stack} into the Yui bag.");
-            moved++;
-        }
-
-        if (moved == 0)
-            return InventoryActionResult.Success("PENDING-UNCHANGED", "No Pending Output could move into the Yui bag.");
-        return InventoryActionResult.Success("PENDING-DRAINED", $"Moved {moved} exact Pending Output stack(s) into the Yui bag.");
+        int moved = recovered + pending;
+        return moved == 0
+            ? InventoryActionResult.Success("OUTPUTS-UNCHANGED", "No Pending Output or Recovery Vault stack could move into the Yui bag.")
+            : InventoryActionResult.Success("OUTPUTS-DRAINED", $"Moved {recovered} Recovery Vault and {pending} Pending Output stack(s) into the Yui bag.");
     }
 
     public InventoryActionResult CreateDeliveryLocked(CompanionRecord record, string deliveryId, long recipientPlayerId, int oneBasedBagSlot, int quantity, ulong tick)
@@ -408,9 +399,8 @@ internal sealed class CompanionInventoryStore
         }
 
         Inventory bag = this.Get(identity);
-        int sourceIndex = oneBasedBagSlot - 1;
-        if (sourceIndex < 0 || sourceIndex >= bag.Count || bag[sourceIndex] is not Item cargo)
-            return InventoryActionResult.Failure("INVALID-BAG-SLOT", "The selected Yui bag slot is empty or outside the bag.");
+        if (!this.TryResolveRegularSlot(identity, oneBasedBagSlot, out int sourceIndex, out Item? selected) || selected is not Item cargo)
+            return InventoryActionResult.Failure("INVALID-BAG-SLOT", $"Regular bag slot must be between 1 and {Capacity} and contain an item.");
         if (IsStarterTool(cargo) || cargo.modData.ContainsKey(StorageTags.ResponsibilityId) || cargo.modData.ContainsKey(DeliveryCargoTag))
             return InventoryActionResult.Failure("INELIGIBLE-DELIVERY-CARGO", "Protected, borrowed, material-responsible, or already escrowed items cannot start a delivery.");
         if (quantity > cargo.Stack)
@@ -666,6 +656,51 @@ internal sealed class CompanionInventoryStore
     internal Inventory GetPlantEscrow(CompanionIdentity identity) => Game1.player.team.GetOrCreateGlobalInventory(GetPlantEscrowNamespace(identity));
 
     private static bool IsStarterTool(Item item) => item.modData.ContainsKey(StarterToolTag);
+
+    private InventoryActionResult DrainOutputContainerLocked(CompanionRecord record, Inventory bag, Inventory source, string sourceKind, ref int moved)
+    {
+        while (this.Count(record.Identity) < Capacity)
+        {
+            int sourceIndex = source.ToList().FindIndex(item => item is not null);
+            if (sourceIndex < 0)
+                break;
+            Item item = source[sourceIndex]!;
+            string responsibilityId = EnsureOutputResponsibility(item);
+            source.RemoveAt(sourceIndex);
+            try
+            {
+                bag.Add(item);
+            }
+            catch (Exception ex)
+            {
+                if (bag.Any(candidate => ReferenceEquals(candidate, item)))
+                {
+                    item.modData.Remove(PendingOutputResponsibilityTag);
+                    TaskReceiptStore.Add(record, $"{sourceKind}-drain:{responsibilityId}", true, "OUTPUT-DRAINED", $"Moved exact stack {item.QualifiedItemId} x{item.Stack} into the Yui bag.");
+                    moved++;
+                    continue;
+                }
+
+                source.Insert(Math.Min(sourceIndex, source.Count), item);
+                return InventoryActionResult.Failure("OUTPUT-DRAIN-ROLLED-BACK", $"{sourceKind} output remained responsible after bag insertion failed: {ex.Message}");
+            }
+
+            item.modData.Remove(PendingOutputResponsibilityTag);
+            TaskReceiptStore.Add(record, $"{sourceKind}-drain:{responsibilityId}", true, "OUTPUT-DRAINED", $"Moved exact stack {item.QualifiedItemId} x{item.Stack} into the Yui bag.");
+            moved++;
+        }
+        return InventoryActionResult.Success("OUTPUT-CONTAINER-DRAINED", $"Drained {moved} {sourceKind} stack(s).");
+    }
+
+    private static string EnsureOutputResponsibility(Item item)
+    {
+        if (item.modData.TryGetValue(PendingOutputResponsibilityTag, out string? responsibilityId)
+            && Guid.TryParseExact(responsibilityId, "N", out _))
+            return responsibilityId;
+        responsibilityId = Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture);
+        item.modData[PendingOutputResponsibilityTag] = responsibilityId;
+        return responsibilityId;
+    }
 
     private static bool MatchesStarterKind(Item item, string kind) => kind switch
     {
