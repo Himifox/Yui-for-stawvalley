@@ -302,6 +302,8 @@ internal sealed class CraftingCoordinator
             transaction.Phase = CraftPhases.CommitReady;
 
             string lastLocation = string.Empty;
+            if (this.bodies.TryGetBody(identity, out NPC craftBody))
+                this.appearance.Prepare(identity, transaction.OperationId, AppearanceActionKinds.Crafting, null, craftBody.FacingDirection);
             for (int child = 0; child < transaction.CraftCount; child++)
             {
                 Item output = current.Recipe.Recipe.createItem();
@@ -552,6 +554,8 @@ internal sealed class CraftingCoordinator
         }
         transaction.Phase = CraftPhases.CommitReady;
         string lastLocation = string.Empty;
+        if (this.bodies.TryGetBody(session.Record.Identity, out NPC craftBody))
+            this.appearance.Prepare(session.Record.Identity, transaction.OperationId, AppearanceActionKinds.Crafting, null, craftBody.FacingDirection);
         try
         {
             for (int child = 0; child < transaction.CraftCount; child++)
