@@ -19,7 +19,13 @@ internal static class CompanionVisualToolAnimation
             animation = default;
             return false;
         }
-        int frameCount = kind == AppearanceActionKinds.CombatDagger ? 2 : kind == AppearanceActionKinds.Watering ? 4 : 6;
+        int frameCount = kind switch
+        {
+            AppearanceActionKinds.CombatDagger => 2,
+            AppearanceActionKinds.Watering => 4,
+            AppearanceActionKinds.Chopping or AppearanceActionKinds.Mining or AppearanceActionKinds.Digging => 5,
+            _ => 6,
+        };
         animation = new VisualToolAnimation(index, frameCount);
         return true;
     }
