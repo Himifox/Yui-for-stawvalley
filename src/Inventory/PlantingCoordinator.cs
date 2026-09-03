@@ -704,7 +704,13 @@ internal sealed class PlantingCoordinator
             Item? seed = FindEscrowItem(runtime.Identity, source.Record.SourceId);
             if (seed is null)
                 return InventoryActionResult.Failure("PLANT-RETURN-SEED-MISSING", "The exact Plant Escrow source disappeared before return.");
-            return TryReturnSeed(this.inventories.GetPlantEscrow(runtime.Identity), this.inventories.Get(runtime.Identity), CompanionInventoryStore.Capacity, source.Record, seed)
+            return TryReturnSeed(
+                this.inventories.GetPlantEscrow(runtime.Identity),
+                this.inventories.Get(runtime.Identity),
+                this.inventories.Count(runtime.Identity),
+                CompanionInventoryStore.Capacity,
+                source.Record,
+                seed)
                 ? InventoryActionResult.Success("PLANT-SEED-RETURNED", "Unused seed returned to the Yui bag.")
                 : InventoryActionResult.Failure("PLANT-RETURN-BAG-FULL", "The Yui bag cannot accept the unused seed; Plant Escrow keeps return-only responsibility.");
         }, result =>
@@ -735,7 +741,13 @@ internal sealed class PlantingCoordinator
                     Item? seed = FindEscrowItem(runtime.Identity, source.Record.SourceId);
                     returned = seed is not null
                         && CompanionStorageCoordinator.IsCurrentCraftChest(access, runtime.Identity.OwnerId)
-                        && TryReturnSeed(this.inventories.GetPlantEscrow(runtime.Identity), access.Chest.Items, access.Chest.GetActualCapacity(), source.Record, seed);
+                        && TryReturnSeed(
+                            this.inventories.GetPlantEscrow(runtime.Identity),
+                            access.Chest.Items,
+                            access.Chest.Items.Count(item => item is not null),
+                            access.Chest.GetActualCapacity(),
+                            source.Record,
+                            seed);
                 }
                 finally
                 {
@@ -950,7 +962,7 @@ internal sealed class PlantingCoordinator
         source.Record.AcquiredQuantity = source.Record.Quantity;
     }
 
-    private static bool TryReturnSeed(Inventory escrow, IList<Item> destination, int capacity, PlantingSourceRecord source, Item seed)
+    private static bool TryReturnSeed(Inventory escrow, IList<Item> destination, int occupiedSlots, int capacity, PlantingSourceRecord source, Item seed)
     {
         Item comparison = seed.getOne();
         comparison.modData.Remove(CompanionInventoryStore.PlantingIdTag);
@@ -960,7 +972,7 @@ internal sealed class PlantingCoordinator
             .FirstOrDefault(index => destination[index] is Item target
                 && target.canStackWith(comparison)
                 && target.Stack + seed.Stack <= target.maximumStackSize(), -1);
-        bool canAddSlot = destination.Count(item => item is not null) < capacity;
+        bool canAddSlot = occupiedSlots < capacity;
         if (mergeIndex < 0 && !canAddSlot)
             return false;
 
