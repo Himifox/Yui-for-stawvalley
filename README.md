@@ -5,7 +5,7 @@
 **会陪你生活、回应你，并在劳动时自然搭把手的 Stardew Valley 农场伙伴。**
 
 <p>
-  <img alt="Version 0.30.0" src="https://img.shields.io/badge/version-0.30.0-ec8fb4?style=flat-square">
+  <img alt="Version 0.31.0" src="https://img.shields.io/badge/version-0.31.0-ec8fb4?style=flat-square">
   <img alt="Stardew Valley 1.6.15" src="https://img.shields.io/badge/Stardew%20Valley-1.6.15-79a95d?style=flat-square">
   <img alt="SMAPI 4.5.2" src="https://img.shields.io/badge/SMAPI-4.5.2%2B-d08b45?style=flat-square">
   <img alt="MIT License" src="https://img.shields.io/badge/license-MIT-6f86d6?style=flat-square">
@@ -27,7 +27,7 @@ Yui 是生活在游戏世界中的农场伙伴，而不是一键清空农场的�
 ```
 
 > [!NOTE]
-> 当前版本为 `0.30.0`。Release 构建已经通过；实验功能仍建议先备份存档再启用。
+> 当前版本为 `0.31.0`。Release 构建已经通过；实验功能仍建议先备份存档再启用。
 
 ## 核心体验
 

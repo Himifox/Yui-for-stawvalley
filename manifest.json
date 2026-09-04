@@ -1,7 +1,7 @@
 {
   "Name": "Yui to Issho! — Farm Days Together",
   "Author": "Himifox",
-  "Version": "0.30.0",
+  "Version": "0.31.0",
   "Description": "Live your farm days with Yui, a persistent companion who follows, talks, tires, remembers, and works beside you.",
   "UniqueID": "Himifox.YuiToIssho",
   "EntryDll": "YuiToIssho.dll",
