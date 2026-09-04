@@ -207,14 +207,19 @@ internal sealed class CompanionAppearanceCoordinator
                 visual.LastMovementTick = this.lastUpdateTick;
             }
             bool visuallyMoving = moved || this.lastUpdateTick - visual.LastMovementTick <= MovementFacingHoldTicks;
+            bool taskOwnsFacing = !string.IsNullOrWhiteSpace(record.ActiveTransactionId);
+            bool waitingAtTaskTarget = taskOwnsFacing && body.controller is null;
             int facing = this.actions.TryGetValue(record.Identity, out ActionPulse? pulse)
                 ? pulse.Facing
-                : visuallyMoving ? visual.MovementFacing : this.ResolveIdleFacing(record, body, visual);
-            body.faceDirection(facing);
+                : waitingAtTaskTarget ? NormalizeFacing(body.FacingDirection)
+                : visuallyMoving ? visual.MovementFacing
+                : this.ResolveIdleFacing(record, body, visual);
+            if (pulse is null && !visuallyMoving && !taskOwnsFacing)
+                body.faceDirection(facing);
             visual.Farmer.faceDirection(facing);
             int frame = this.ResolveFrame(record.Identity, body, visual, this.lastUpdateTick, facing, out bool flip);
             Vector2 screen = Game1.GlobalToLocal(Game1.viewport, visualPosition);
-            bool idle = pulse is null && !visuallyMoving;
+            bool idle = pulse is null && !visuallyMoving && !taskOwnsFacing;
             UpdateIdleEyes(visual.Farmer, record.Identity, this.lastUpdateTick, idle);
             if (idle)
                 screen.Y += IdleBreathingOffset(record.Identity, this.lastUpdateTick);
