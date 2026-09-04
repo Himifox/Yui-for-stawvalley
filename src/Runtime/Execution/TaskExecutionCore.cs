@@ -467,11 +467,7 @@ internal sealed class TaskNavigationService
 
     public bool CanReach(NPC body, GameLocation location, Vector2 destination, int facing, int pathSearchLimit)
     {
-        if (body.TilePoint == destination.ToPoint())
-            return true;
-
-        var probe = new PathFindController(body, location, destination.ToPoint(), facing, null, pathSearchLimit);
-        return probe.pathToEndPoint is { Count: > 0 };
+        return CompanionPathing.CanReach(body, location, destination, facing, pathSearchLimit);
     }
 
     public Vector2? FindReachableCardinalApproach(NPC body, GameLocation location, Vector2 target, int pathSearchLimit)
@@ -484,8 +480,7 @@ internal sealed class TaskNavigationService
             target + new Vector2(0, -1),
         };
         foreach (Vector2 candidate in candidates
-            .Where(candidate => location.isTileLocationOpen(candidate)
-                && location.characters.All(character => ReferenceEquals(character, body) || character.Tile != candidate))
+            .Where(candidate => CompanionPathing.IsStandable(body, location, candidate))
             .OrderBy(candidate => Vector2.DistanceSquared(
                 candidate * Game1.tileSize + new Vector2(Game1.tileSize / 2f),
                 body.StandingPixel.ToVector2()))

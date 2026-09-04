@@ -41,14 +41,12 @@ internal sealed class CompanionBodyBinder
         if (!Context.IsWorldReady || owner.currentLocation is null)
             return BodyBindResult.Failure("OWNER-LOCATION-UNAVAILABLE", $"Owner {identity.OwnerId} has no available location.");
 
-        Vector2 spawnTile = FindSpawnTile(owner.currentLocation, owner.Tile);
         string internalName = $"YuiToIssho_{identity.OwnerId}_{identity.Slot}";
-        ulong generation = this.NextGeneration(identity);
         var body = new NPC
         {
             Name = internalName,
             Sprite = new AnimatedSprite("Characters/Abigail", 0, 16, 32),
-            Position = spawnTile * Game1.tileSize,
+            Position = owner.Position,
             currentLocation = owner.currentLocation,
             Speed = DefaultMovementSpeed,
             // PathFindController routes movement and final facing through Character.faceDirection,
@@ -59,7 +57,13 @@ internal sealed class CompanionBodyBinder
             IsInvisible = true,
             HideShadow = true,
         };
+        Vector2? spawnTile = FindSpawnTile(owner.currentLocation, owner.Tile, body);
+        if (spawnTile is null)
+            return BodyBindResult.Failure("NO-SAFE-SPAWN", $"No collision-free spawn tile is available near owner {identity.OwnerId}.");
+
+        body.Position = spawnTile.Value * Game1.tileSize;
         body.faceDirection(2);
+        ulong generation = this.NextGeneration(identity);
         body.modData[BodyTag] = "1";
         body.modData[OwnerIdTag] = identity.OwnerId.ToString(CultureInfo.InvariantCulture);
         body.modData[SlotTag] = identity.Slot.ToString(CultureInfo.InvariantCulture);
@@ -158,29 +162,28 @@ internal sealed class CompanionBodyBinder
         }
     }
 
-    private static Vector2 FindSpawnTile(GameLocation location, Vector2 ownerTile)
+    private static Vector2? FindSpawnTile(GameLocation location, Vector2 ownerTile, NPC body)
     {
-        Vector2[] offsets =
-        {
-            new(1, 0),
-            new(-1, 0),
-            new(0, 1),
-            new(0, -1),
-            new(1, 1),
-            new(-1, 1),
-            new(1, -1),
-            new(-1, -1),
-        };
+        const int searchLimit = 64;
+        var pending = new Queue<Vector2>();
+        var visited = new HashSet<Vector2> { ownerTile };
+        pending.Enqueue(ownerTile);
 
-        foreach (Vector2 offset in offsets)
+        for (int checkedTiles = 0; checkedTiles < searchLimit && pending.Count > 0; checkedTiles++)
         {
-            Vector2 candidate = ownerTile + offset;
-            if (location.isTileLocationOpen(candidate)
-                && location.characters.All(character => character.Tile != candidate))
+            Vector2 candidate = pending.Dequeue();
+            if (candidate != ownerTile && CompanionPathing.IsStandable(body, location, candidate))
                 return candidate;
+
+            foreach (Vector2 direction in Utility.DirectionsTileVectors)
+            {
+                Vector2 next = candidate + direction;
+                if (location.isTileOnMap(next) && visited.Add(next))
+                    pending.Enqueue(next);
+            }
         }
 
-        return ownerTile;
+        return null;
     }
 
     private static void StopBody(NPC body)
