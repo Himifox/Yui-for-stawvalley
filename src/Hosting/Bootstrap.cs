@@ -17,7 +17,8 @@ internal enum LifecycleState
 
 internal sealed class Bootstrap
 {
-    private const string SaveDataKey = "schema-v9";
+    private const string SaveDataKey = "schema-v10";
+    private const string LegacySaveDataKey = "schema-v9";
 
     private readonly IModHelper helper;
     private readonly IMonitor monitor;
@@ -302,7 +303,20 @@ internal sealed class Bootstrap
 
         try
         {
-            YuiToIsshoSaveData data = this.helper.Data.ReadSaveData<YuiToIsshoSaveData>(SaveDataKey) ?? new YuiToIsshoSaveData();
+            YuiToIsshoSaveData? data = this.helper.Data.ReadSaveData<YuiToIsshoSaveData>(SaveDataKey);
+            bool loadedLegacyKey = false;
+            if (data is null)
+            {
+                data = this.helper.Data.ReadSaveData<YuiToIsshoSaveData>(LegacySaveDataKey);
+                loadedLegacyKey = data is not null;
+            }
+            data ??= new YuiToIsshoSaveData();
+            SaveMigrationResult migration = SaveDataMigrator.Migrate(data);
+            if (!migration.IsSuccess)
+            {
+                this.monitor.Log($"HY-SAVE-{migration.Code}: {migration.Message} Companion writes are disabled for this save.", LogLevel.Error);
+                return;
+            }
             RegistryLoadResult result = this.registry.Load(data);
             if (!result.IsSuccess)
             {
@@ -378,6 +392,8 @@ internal sealed class Bootstrap
                 this.speech.OfferFirstMeeting(CompanionIdentity.ForOwner(Game1.player.UniqueMultiplayerID));
             this.agents.BeginHostSession();
             this.multiplayer.BeginHostSession();
+            if (migration.WasMigrated || loadedLegacyKey)
+                this.monitor.Log($"HY-SAVE-{migration.Code}: {migration.Message} The migrated data will be written to {SaveDataKey} on the next save.", LogLevel.Info);
             this.monitor.Log($"Yui to Issho! save scope is ready. {result.Message}", LogLevel.Info);
         }
         catch (Exception ex)

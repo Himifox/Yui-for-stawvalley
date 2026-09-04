@@ -42,7 +42,7 @@ internal sealed class CompanionRegistry
         this.authorizedChests.Clear();
 
         if (data.SchemaVersion != YuiToIsshoSaveData.CurrentSchemaVersion)
-            return RegistryLoadResult.Failure("UNSUPPORTED-SCHEMA", $"Development builds accept only schema {YuiToIsshoSaveData.CurrentSchemaVersion}; found {data.SchemaVersion}. Start with fresh Yui to Issho! test data.");
+            return RegistryLoadResult.Failure("UNMIGRATED-SCHEMA", $"Registry input must be migrated to schema {YuiToIsshoSaveData.CurrentSchemaVersion}; found {data.SchemaVersion}.");
 
         if (data.Companions is null)
             return RegistryLoadResult.Failure("INVALID-DATA", "The companion collection is missing.");
