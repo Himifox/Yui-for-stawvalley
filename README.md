@@ -72,6 +72,10 @@ node scripts/validate-release.mjs --artifact
 
 第一条命令会检查项目、manifest、README、存档 schema、联机协议与翻译键是否一致。生成的模组压缩包位于 `bin/Release/net6.0/`；最后一条命令同时确认对应版本的压缩包确实存在。`EnableModDeploy` 默认关闭，因此构建不会自动修改游戏的 `Mods` 目录。
 
+### 发布
+
+推送与 manifest 完全一致的 `vX.Y.Z` 标签后，Release 工作流会在装有 Stardew Valley、SMAPI、Git Bash 与 GitHub CLI 的 Windows 自托管 runner 上构建压缩包，并创建或更新同名 GitHub Release。该 runner 需要同时配置 `self-hosted`、`Windows`、`X64`、`stardew-valley` 标签；普通提交与 PR 只执行不依赖游戏文件的元数据校验。
+
 ## 常用命令
 
 | 命令 | 作用 |
