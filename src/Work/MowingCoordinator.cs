@@ -237,32 +237,64 @@ internal sealed class MowingCoordinator
             return;
         if (!task.Session.TryEnterSettlement())
             return;
+        this.inventories.RequestTransfer(
+            task.Identity,
+            () => this.SettleLocked(task, body),
+            result =>
+            {
+                if (!this.tasks.TryGetValue(task.Identity, out MowingTask? current) || !ReferenceEquals(current, task))
+                    return;
+                this.Complete(task, result.Code, result.Message, result.IsSuccess);
+            });
+    }
+
+    private InventoryActionResult SettleLocked(MowingTask task, NPC expectedBody)
+    {
+        if (!this.execution.IsCurrent(task.Session)
+            || !this.inventories.ContainsExact(task.Identity, task.Scythe)
+            || !task.Scythe.isScythe())
+            return InventoryActionResult.Failure("SCYTHE-CHANGED", "The task or exact reserved scythe changed while the bag lock was pending.");
+        if (!this.bodies.TryGetBody(task.Identity, out NPC body)
+            || !ReferenceEquals(body, expectedBody)
+            || !ReferenceEquals(body.currentLocation, task.Location))
+            return InventoryActionResult.Failure("BODY-INVALID", "The companion body disappeared while the bag lock was pending.");
+        if (!ReferenceEquals(task.Owner.currentLocation, task.Location) || !OwnerContextLease.CanProject(task.Owner))
+            return InventoryActionResult.Failure("OWNER-BUSY", "The owner changed location or became busy while the bag lock was pending.");
+        if (!this.ValidateReservedGrass(task, body.Position, out string validationFailure))
+            return InventoryActionResult.Failure("AREA-CHANGED", validationFailure);
+
         using VitalCostLease cost = this.vitals.ReserveCost(task.Identity, VitalActionKinds.Mowing, $"{task.OperationId}:mow");
         if (!cost.IsSuccess)
-        {
-            this.Complete(task, cost.Result.Code, cost.Result.Message, false);
-            return;
-        }
+            return InventoryActionResult.Failure(cost.Result.Code, cost.Result.Message);
 
+        bool vanillaInvoked = false;
+        Exception? settlementError = null;
         this.appearance.Prepare(task.Identity, task.OperationId, AppearanceActionKinds.Mowing, task.Scythe, task.Facing);
+        WorldDebrisCapture worldDrops = WorldDebrisCapture.Begin(task.Location, Game1.currentLocation);
         try
         {
-            using OwnerContextLease context = OwnerContextLease.Project(task.Owner, body.Position, task.Facing);
+            using OwnerContextLease context = OwnerContextLease.Project(task.Owner, body.Position, task.Facing, task.Location);
             task.Owner.FarmerSprite.currentAnimationIndex = task.SwingFrame;
             Vector2 toolLocation = task.Owner.GetToolLocation(ignoreClick: true);
+            vanillaInvoked = true;
             this.inventories.RunWithMeleeWeaponSelected(
                 task.Identity,
                 task.Owner,
                 task.Scythe,
-                () => task.Scythe.DoDamage(task.Location, (int)toolLocation.X, (int)toolLocation.Y, task.Facing, VanillaSwingPower, task.Owner)
-            );
-            cost.Commit();
+                () => task.Scythe.DoDamage(task.Location, (int)toolLocation.X, (int)toolLocation.Y, task.Facing, VanillaSwingPower, task.Owner));
         }
         catch (Exception ex)
         {
-            this.Complete(task, "SETTLEMENT-ERROR", $"The vanilla swing stopped without retry after an error: {ex.Message}", false);
-            return;
+            settlementError = ex;
         }
+
+        if (vanillaInvoked)
+            cost.Commit();
+        WorldDebrisRouteResult worldResult = worldDrops.RouteNewLocked(task.Identity, this.inventories);
+        if (!worldResult.Result.IsSuccess)
+            return worldResult.Result;
+        if (settlementError is not null)
+            return InventoryActionResult.Failure("SETTLEMENT-ERROR", $"The vanilla swing stopped without retry after an error: {settlementError.Message}");
 
         bool changed = false;
         foreach (MowTarget target in task.Targets)
@@ -272,25 +304,16 @@ internal sealed class MowingCoordinator
                 changed = true;
                 continue;
             }
-
             if (!ReferenceEquals(current.Instance, target.Instance))
-            {
-                this.Complete(task, "TARGET-REPLACED-AFTER-SWING", $"{target.Kind} at {target.Tile.X},{target.Tile.Y} was replaced during the vanilla swing; no retry will occur.", false);
-                return;
-            }
-
+                return InventoryActionResult.Failure("TARGET-REPLACED-AFTER-SWING", $"{target.Kind} at {target.Tile.X},{target.Tile.Y} was replaced during the vanilla swing; no retry will occur.");
             if (current.State < target.State)
                 changed = true;
         }
 
-        if (changed)
-        {
-            this.appearance.Commit(task.Identity, task.OperationId);
-            this.Complete(task, "COMMITTED", $"Vanilla settled one multi-target scythe swing across {task.Targets.Count} reserved grass/weed target(s); affectedOutside={task.OutsideScopeCount}.", true);
-            return;
-        }
-
-        this.Complete(task, "VANILLA-NO-CHANGE", "The one permitted vanilla swing changed no reserved grass; no retry was attempted.", false);
+        if (!changed)
+            return InventoryActionResult.Failure("VANILLA-NO-CHANGE", "The one permitted vanilla swing changed no reserved grass; no retry was attempted.");
+        this.appearance.Commit(task.Identity, task.OperationId);
+        return InventoryActionResult.Success("COMMITTED", $"Vanilla settled one multi-target scythe swing across {task.Targets.Count} reserved grass/weed target(s); routed {worldResult.StackCount} drop stack(s), affectedOutside={task.OutsideScopeCount}.");
     }
 
     private MowCommandResult Complete(MowingTask task, string code, string message, bool success)

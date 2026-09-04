@@ -223,23 +223,42 @@ internal sealed class DiggingCoordinator
         if (!task.Session.TryEnterSettlement())
             return;
 
+        this.inventories.RequestTransfer(
+            task.Identity,
+            () => this.SettleLocked(task),
+            result =>
+            {
+                if (!this.tasks.TryGetValue(task.Identity, out DiggingTask? current) || !ReferenceEquals(current, task))
+                    return;
+                if (result.IsSuccess)
+                    this.appearance.Commit(task.Identity, task.OperationId);
+                this.Complete(task, result.Code, result.Message, result.IsSuccess);
+            });
+    }
+
+    private InventoryActionResult SettleLocked(DiggingTask task)
+    {
+        if (!this.execution.IsCurrent(task.Session) || !this.inventories.ContainsExact(task.Identity, task.Hoe))
+            return InventoryActionResult.Failure("TARGET-CHANGED", "The task or reserved Hoe changed while the bag lock was pending.");
+        if (!this.ValidateTarget(task, out string targetFailure))
+            return InventoryActionResult.Failure("TARGET-CHANGED", targetFailure);
+        if (!this.bodies.TryGetBody(task.Identity, out NPC actionBody)
+            || !ReferenceEquals(actionBody.currentLocation, task.Location))
+            return InventoryActionResult.Failure("BODY-INVALID", "The companion body disappeared while the bag lock was pending.");
+        if (!ReferenceEquals(task.Owner.currentLocation, task.Location) || !OwnerContextLease.CanProject(task.Owner))
+            return InventoryActionResult.Failure("OWNER-BUSY", "The owner changed location or became busy while the bag lock was pending.");
+
         using VitalCostLease cost = this.vitals.ReserveCost(task.Identity, VitalActionKinds.Digging, $"{task.OperationId}:dig");
         if (!cost.IsSuccess)
-        {
-            this.Complete(task, cost.Result.Code, cost.Result.Message, false);
-            return;
-        }
+            return InventoryActionResult.Failure(cost.Result.Code, cost.Result.Message);
+
         bool vanillaInvoked = false;
+        Exception? settlementError = null;
         this.appearance.Prepare(task.Identity, task.OperationId, AppearanceActionKinds.Digging, task.Hoe, task.Facing);
+        WorldDebrisCapture worldDrops = WorldDebrisCapture.Begin(task.Location, Game1.currentLocation);
         try
         {
-            if (!this.bodies.TryGetBody(task.Identity, out NPC actionBody))
-            {
-                this.Complete(task, "BODY-INVALID", "The companion body disappeared before the Hoe commit.", false);
-                return;
-            }
-
-            using OwnerContextLease context = OwnerContextLease.Project(task.Owner, actionBody.Position, task.Facing);
+            using OwnerContextLease context = OwnerContextLease.Project(task.Owner, actionBody.Position, task.Facing, task.Location);
             task.Owner.toolPower.Value = UnchargedToolPower;
             int targetPixelX = (int)(task.TargetTile.X * Game1.tileSize) + (Game1.tileSize / 2);
             int targetPixelY = (int)(task.TargetTile.Y * Game1.tileSize) + (Game1.tileSize / 2);
@@ -248,42 +267,40 @@ internal sealed class DiggingCoordinator
         }
         catch (Exception ex)
         {
+            settlementError = ex;
+        }
+
+        WorldDebrisRouteResult worldResult = worldDrops.RouteNewLocked(task.Identity, this.inventories);
+        if (!worldResult.Result.IsSuccess)
+        {
             if (vanillaInvoked)
                 cost.Commit();
-            this.Complete(task, "SETTLEMENT-ERROR", $"The vanilla Hoe action stopped without retry after an error: {ex.Message}", false);
-            return;
+            return worldResult.Result;
+        }
+        if (settlementError is not null)
+        {
+            if (vanillaInvoked)
+                cost.Commit();
+            return InventoryActionResult.Failure("SETTLEMENT-ERROR", $"The vanilla Hoe action stopped without retry after an error: {settlementError.Message}");
         }
 
         if (task.Kind == DigTargetKind.OrdinaryGround)
         {
-            if (task.Location.GetHoeDirtAtTile(task.TargetTile) is not null)
-            {
-                cost.Commit();
-                this.appearance.Commit(task.Identity, task.OperationId);
-                this.Complete(task, "COMMITTED", $"Vanilla tilled ordinary ground at {task.Target} once.", true);
-                return;
-            }
-
-            this.Complete(task, "VANILLA-REJECTED", "Vanilla added no HoeDirt; no retry or adjacent target was attempted.", false);
-            return;
+            if (task.Location.GetHoeDirtAtTile(task.TargetTile) is null)
+                return InventoryActionResult.Failure("VANILLA-REJECTED", "Vanilla added no HoeDirt; no retry or adjacent target was attempted.");
+            cost.Commit();
+            return InventoryActionResult.Success("COMMITTED", $"Vanilla tilled ordinary ground at {task.Target} once; routed {worldResult.StackCount} drop stack(s) to Yui responsibility.");
         }
 
         if (!task.Location.Objects.TryGetValue(task.TargetTile, out SObject? current))
         {
             cost.Commit();
-            this.appearance.Commit(task.Identity, task.OperationId);
-            this.Complete(task, "COMMITTED", $"Vanilla settled exact {task.Kind} {task.Target}; its products remain unrestricted world Debris.", true);
-            return;
+            return InventoryActionResult.Success("COMMITTED", $"Vanilla settled exact {task.Kind} {task.Target}; routed {worldResult.StackCount} drop stack(s) to Yui responsibility.");
         }
-
         if (ReferenceEquals(current, task.DigSpot))
-        {
-            this.Complete(task, "VANILLA-REJECTED", $"Vanilla left the exact {task.Kind} in place; no retry was attempted.", false);
-            return;
-        }
-
+            return InventoryActionResult.Failure("VANILLA-REJECTED", $"Vanilla left the exact {task.Kind} in place; no retry was attempted.");
         cost.Commit();
-        this.Complete(task, "TARGET-REPLACED-AFTER-SETTLEMENT", "A replacement object appeared during settlement; the original world change kept its one stamina charge and no second Hoe action was attempted.", false);
+        return InventoryActionResult.Failure("TARGET-REPLACED-AFTER-SETTLEMENT", "A replacement object appeared during settlement; the original world change kept its one stamina charge and no second Hoe action was attempted.");
     }
 
     private DigCommandResult Complete(DiggingTask task, string code, string message, bool success)

@@ -189,45 +189,72 @@ internal sealed class MiningCoordinator
         if (!task.Session.TryEnterSettlement(stepId))
             return;
 
-        using VitalCostLease cost = this.vitals.ReserveCost(task.Identity, VitalActionKinds.Mining, stepId);
+        this.inventories.RequestTransfer(
+            task.Identity,
+            () => this.SettleOneHitLocked(task, tick),
+            result =>
+            {
+                if (!this.tasks.TryGetValue(task.Identity, out MineTask? current) || !ReferenceEquals(current, task))
+                    return;
+                if (!result.IsSuccess || result.Code != "STEP-COMMITTED")
+                    this.Complete(task, result.Code, result.Message, result.IsSuccess);
+                else
+                    task.Session.FinishSettlementStep(stepId);
+            });
+    }
+
+    private InventoryActionResult SettleOneHitLocked(MineTask task, ulong tick)
+    {
+        if (!this.execution.IsCurrent(task.Session)
+            || !task.TargetInstance.IsPresent(task.Location)
+            || !this.inventories.ContainsExact(task.Identity, task.Tool))
+            return InventoryActionResult.Failure("TARGET-CHANGED", "The exact mining target or reserved pickaxe changed while the bag lock was pending.");
+        if (!this.bodies.TryGetBody(task.Identity, out NPC actionBody)
+            || !ReferenceEquals(actionBody.currentLocation, task.Location))
+            return InventoryActionResult.Failure("BODY-INVALID", "The companion body disappeared while the bag lock was pending.");
+        if (!ReferenceEquals(task.Owner.currentLocation, task.Location) || !OwnerContextLease.CanProject(task.Owner))
+            return InventoryActionResult.Failure("OWNER-BUSY", "The owner changed location or became busy while the bag lock was pending.");
+
+        using VitalCostLease cost = this.vitals.ReserveCost(task.Identity, VitalActionKinds.Mining, $"{task.OperationId}:hit:{task.HitCount}");
         if (!cost.IsSuccess)
-        {
-            this.Complete(task, cost.Result.Code, cost.Result.Message, success: false);
-            return;
-        }
+            return InventoryActionResult.Failure(cost.Result.Code, cost.Result.Message);
+
         int facing = task.Facing;
+        bool vanillaInvoked = false;
+        Exception? settlementError = null;
         this.appearance.Prepare(task.Identity, task.OperationId, AppearanceActionKinds.Mining, task.Tool, facing);
+        WorldDebrisCapture worldDrops = WorldDebrisCapture.Begin(task.Location, Game1.currentLocation);
         try
         {
-            if (!this.bodies.TryGetBody(task.Identity, out NPC actionBody))
-            {
-                this.Complete(task, "BODY-INVALID", "The companion body disappeared before the pickaxe commit.", success: false);
-                return;
-            }
-
-            using OwnerContextLease context = OwnerContextLease.Project(task.Owner, actionBody.Position, facing);
+            using OwnerContextLease context = OwnerContextLease.Project(task.Owner, actionBody.Position, facing, task.Location);
+            vanillaInvoked = true;
             task.Tool.DoFunction(
                 task.Location,
                 (int)task.TargetTile.X * Game1.tileSize,
                 (int)task.TargetTile.Y * Game1.tileSize,
                 0,
-                task.Owner
-            );
-            cost.Commit();
-            this.appearance.Commit(task.Identity, task.OperationId);
-            task.HitCount++;
-            task.NextHitTick = tick + HitDelayTicks;
-
-            if (!task.TargetInstance.IsPresent(task.Location))
-                this.Complete(task, "COMMITTED", $"Removed {task.Target} after {task.HitCount} single-settlement hit(s).", success: true);
-            else
-                task.Session.FinishSettlementStep(stepId);
+                task.Owner);
         }
         catch (Exception ex)
         {
-            cost.Commit();
-            this.Complete(task, "SETTLEMENT-ERROR", $"Pickaxe settlement stopped without retry after an error: {ex.Message}", success: false);
+            settlementError = ex;
         }
+
+        if (vanillaInvoked)
+            cost.Commit();
+        WorldDebrisRouteResult worldResult = worldDrops.RouteNewLocked(task.Identity, this.inventories);
+        task.RoutedDropStacks += worldResult.StackCount;
+        if (!worldResult.Result.IsSuccess)
+            return worldResult.Result;
+        if (settlementError is not null)
+            return InventoryActionResult.Failure("SETTLEMENT-ERROR", $"Pickaxe settlement stopped without retry after an error: {settlementError.Message}");
+
+        this.appearance.Commit(task.Identity, task.OperationId);
+        task.HitCount++;
+        task.NextHitTick = tick + HitDelayTicks;
+        return !task.TargetInstance.IsPresent(task.Location)
+            ? InventoryActionResult.Success("COMMITTED", $"Removed {task.Target} after {task.HitCount} single-settlement hit(s); routed {task.RoutedDropStacks} drop stack(s) to Yui responsibility.")
+            : InventoryActionResult.Success("STEP-COMMITTED", $"Committed mining hit {task.HitCount} and routed {worldResult.StackCount} immediate drop stack(s).");
     }
 
     private MineCommandResult Complete(MineTask task, string code, string message, bool success)
@@ -373,6 +400,7 @@ internal sealed class MiningCoordinator
         public Farmer Owner { get; }
         public Pickaxe Tool { get; }
         public TaskNavigationState Navigation { get; }
+        public int RoutedDropStacks { get; set; }
         public int HitCount { get; set; }
         public ulong NextHitTick { get; set; }
     }

@@ -348,6 +348,7 @@ internal sealed class AnimalCareCoordinator
         this.appearance.Prepare(task.Identity, task.OperationId, visualKind, task.Tool, facing);
         IReadOnlyList<Item> outputs;
         Exception? settlementError = null;
+        WorldDebrisCapture worldDrops = WorldDebrisCapture.Begin(task.Location, Game1.currentLocation);
         using (OwnerContextLease context = OwnerContextLease.Project(task.Owner, body.Position, facing, task.Location))
         using (FarmerInventoryIsolationLease inventory = FarmerInventoryIsolationLease.Begin(task.Owner))
         {
@@ -384,14 +385,18 @@ internal sealed class AnimalCareCoordinator
             if (!routed.IsSuccess)
                 return routed;
         }
+        WorldDebrisRouteResult worldResult = worldDrops.RouteNewLocked(task.Identity, this.inventories);
+        if (!worldResult.Result.IsSuccess)
+            return worldResult.Result;
+        int routedStacks = outputs.Count + worldResult.StackCount;
 
         if (settlementError is not null)
             return InventoryActionResult.Failure("SETTLEMENT-ERROR", $"Animal care stopped without retry after {settlementError.GetType().Name}.");
         if (!produceCleared)
             return InventoryActionResult.Failure("VANILLA-REJECTED", "Vanilla left the animal's produce unchanged; no retry or fabricated item occurred.");
-        if (outputs.Count == 0)
-            return InventoryActionResult.Failure("OUTPUT-MISSING", "Vanilla cleared the animal's produce without producing a traceable inventory output.");
-        return InventoryActionResult.Success("COMMITTED", $"Vanilla produced {outputs.Count} exact stack(s), now owned by this Yui.");
+        if (routedStacks == 0)
+            return InventoryActionResult.Failure("OUTPUT-MISSING", "Vanilla cleared the animal's produce without producing a traceable inventory or world-debris output.");
+        return InventoryActionResult.Success("COMMITTED", $"Vanilla produced {routedStacks} exact stack(s), now owned by this Yui.");
     }
 
     private CareCommandResult Complete(CareTask task, string code, string message, bool success)

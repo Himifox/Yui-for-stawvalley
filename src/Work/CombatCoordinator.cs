@@ -479,19 +479,34 @@ internal sealed class CombatCoordinator
             this.Complete(task, "COMBAT-TARGET-RESERVED", reservation.Message, false);
             return;
         }
+        if (!task.Session.TryEnterSettlement())
+            return;
+        this.inventories.RequestTransfer(
+            task.Identity,
+            () => this.SettleLocked(task, body, setup, engineActor),
+            result =>
+            {
+                if (!this.tasks.TryGetValue(task.Identity, out CombatTask? current) || !ReferenceEquals(current, task))
+                    return;
+                this.Complete(task, result.Code, result.Message, result.IsSuccess);
+            });
+    }
+
+    private InventoryActionResult SettleLocked(CombatTask task, NPC expectedBody, AttackSetup setup, Farmer engineActor)
+    {
+        if (!this.execution.IsCurrent(task.Session)
+            || !this.bodies.TryGetBody(task.Identity, out NPC body)
+            || !ReferenceEquals(body, expectedBody)
+            || !OwnerContextLease.CanProject(engineActor))
+            return InventoryActionResult.Failure("COMBAT-TARGET-INVALID", "The combat task, body, or owner changed while the bag lock was pending.");
+        if (!ValidateSettlement(task, body, setup, out string failure))
+            return InventoryActionResult.Failure("COMBAT-TARGET-INVALID", failure);
+
         using VitalCostLease cost = this.vitals.ReserveCost(task.Identity, VitalActionKinds.Combat, $"{task.OperationId}:swing");
         if (!cost.IsSuccess)
         {
             string costCode = cost.Result.Code == "ENERGY-INSUFFICIENT" ? "COMBAT-ENERGY-INSUFFICIENT" : cost.Result.Code;
-            this.Complete(task, costCode, cost.Result.Message, false);
-            return;
-        }
-        if (!task.Session.TryEnterSettlement())
-            return;
-        if (!ValidateSettlement(task, body, setup, out failure))
-        {
-            this.Complete(task, "COMBAT-TARGET-INVALID", failure, false);
-            return;
+            return InventoryActionResult.Failure(costCode, cost.Result.Message);
         }
 
         Dictionary<Monster, int> healthBefore = setup.HitSet.ToDictionary(monster => monster, monster => monster.Health);
@@ -499,6 +514,8 @@ internal sealed class CombatCoordinator
         body.faceDirection(setup.Facing);
         this.appearance.Prepare(task.Identity, task.OperationId, visualKind, task.Weapon, setup.Facing);
         bool submitted = false;
+        Exception? settlementError = null;
+        WorldDebrisCapture worldDrops = WorldDebrisCapture.Begin(task.Location, Game1.currentLocation);
         try
         {
             body.Position = setup.BodyPosition;
@@ -511,29 +528,31 @@ internal sealed class CombatCoordinator
                 task.Identity,
                 engineActor,
                 task.Weapon,
-                () => task.Weapon.DoDamage(task.Location, (int)toolLocation.X, (int)toolLocation.Y, setup.Facing, VanillaSwingPower, engineActor)
-            );
-            cost.Commit();
+                () => task.Weapon.DoDamage(task.Location, (int)toolLocation.X, (int)toolLocation.Y, setup.Facing, VanillaSwingPower, engineActor));
         }
         catch (Exception ex)
         {
-            if (submitted)
-                cost.Commit();
-            this.Complete(task, submitted ? "COMBAT-SETTLEMENT-UNCERTAIN" : "SETTLEMENT-ERROR", $"The one permitted vanilla swing stopped without retry after an error: {ex.Message}", false);
-            return;
+            settlementError = ex;
+        }
+
+        if (submitted)
+            cost.Commit();
+        WorldDebrisRouteResult worldResult = worldDrops.RouteNewLocked(task.Identity, this.inventories);
+        if (!worldResult.Result.IsSuccess)
+            return worldResult.Result;
+        if (settlementError is not null)
+        {
+            string code = submitted ? "COMBAT-SETTLEMENT-UNCERTAIN" : "SETTLEMENT-ERROR";
+            return InventoryActionResult.Failure(code, $"The one permitted vanilla swing stopped without retry after an error: {settlementError.Message}");
         }
 
         int defeatedCount = setup.HitSet.Count(monster => !task.Location.characters.Any(character => ReferenceEquals(character, monster)) || monster.Health <= 0);
         int damagedCount = setup.HitSet.Count(monster => monster.Health < healthBefore[monster]);
-        if (defeatedCount > 0 || damagedCount > 0)
-        {
-            this.appearance.Commit(task.Identity, task.OperationId);
-            this.Complete(task, "COMMITTED", $"One real {WeaponKind(task.Weapon)} swing committed once; affected={setup.HitSet.Length}, damaged={damagedCount}, defeated={defeatedCount}. Vanilla owns death effects and drops.", true);
-        }
-        else
-        {
-            this.Complete(task, "COMBAT-VANILLA-NO-DAMAGE", $"Vanilla applied no verifiable damage to the complete {setup.HitSet.Length}-Monster Hit Set; the operation is terminal and was not retried.", false);
-        }
+        if (defeatedCount == 0 && damagedCount == 0)
+            return InventoryActionResult.Failure("COMBAT-VANILLA-NO-DAMAGE", $"Vanilla applied no verifiable damage to the complete {setup.HitSet.Length}-Monster Hit Set; the operation is terminal and was not retried.");
+
+        this.appearance.Commit(task.Identity, task.OperationId);
+        return InventoryActionResult.Success("COMMITTED", $"One real {WeaponKind(task.Weapon)} swing committed once; affected={setup.HitSet.Length}, damaged={damagedCount}, defeated={defeatedCount}, routedDrops={worldResult.StackCount}.");
     }
 
     private bool ValidateSettlement(CombatTask task, NPC body, AttackSetup setup, out string failure)

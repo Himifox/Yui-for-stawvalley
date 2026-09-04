@@ -63,9 +63,14 @@ internal sealed class WorldDebrisCapture
         {
             if (debris is null
                 || !visited.Add(debris)
-                || !location.debris.Contains(debris)
-                || !TryDetachOutput(debris, out Item output, out bool detachedExactItem))
+                || !location.debris.Contains(debris))
                 continue;
+            if (!TryDetachOutput(debris, out Item output, out bool detachedExactItem))
+            {
+                return new WorldDebrisRouteResult(
+                    InventoryActionResult.Failure("WORLD-OUTPUT-UNREADABLE", $"A new world drop {debris.itemId.Value ?? "<unknown>"} could not be converted without losing quantity."),
+                    routed);
+            }
 
             if (!location.debris.Remove(debris))
             {

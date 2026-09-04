@@ -168,7 +168,8 @@ internal sealed class ForageCoordinator
         this.appearance.Prepare(task.Identity, task.OperationId, AppearanceActionKinds.Forage, null, facing);
         IReadOnlyList<Item> outputs;
         Exception? settlementError = null;
-        using (OwnerContextLease context = OwnerContextLease.Project(task.Owner, body.Position, facing))
+        WorldDebrisCapture worldDrops = WorldDebrisCapture.Begin(task.Location, Game1.currentLocation);
+        using (OwnerContextLease context = OwnerContextLease.Project(task.Owner, body.Position, facing, task.Location))
         using (FarmerInventoryIsolationLease inventory = FarmerInventoryIsolationLease.Begin(task.Owner))
         {
             try
@@ -189,6 +190,10 @@ internal sealed class ForageCoordinator
             if (!routed.IsSuccess)
                 return routed;
         }
+        WorldDebrisRouteResult worldResult = worldDrops.RouteNewLocked(task.Identity, this.inventories);
+        if (!worldResult.Result.IsSuccess)
+            return worldResult.Result;
+        int routedStacks = outputs.Count + worldResult.StackCount;
 
         if (settlementError is not null)
             return InventoryActionResult.Failure("SETTLEMENT-ERROR", $"Ground collection stopped without retry after {settlementError.GetType().Name}.");
@@ -196,9 +201,9 @@ internal sealed class ForageCoordinator
             return ReferenceEquals(current, task.TargetObject)
                 ? InventoryActionResult.Failure("VANILLA-REJECTED", "Vanilla left the exact ground object in the world; no retry will occur.")
                 : InventoryActionResult.Failure("TARGET-CHANGED-AFTER-SETTLEMENT", "A replacement object appeared; no second collection was attempted.");
-        if (outputs.Count == 0)
-            return InventoryActionResult.Failure("OUTPUT-MISSING", "Vanilla removed the ground object without producing a traceable inventory output.");
-        return InventoryActionResult.Success("COMMITTED", $"Vanilla collected {task.Target}; {outputs.Count} exact output stack(s) now belong to this Yui.");
+        if (routedStacks == 0)
+            return InventoryActionResult.Failure("OUTPUT-MISSING", "Vanilla removed the ground object without producing a traceable inventory or world-debris output.");
+        return InventoryActionResult.Success("COMMITTED", $"Vanilla collected {task.Target}; {routedStacks} exact output stack(s) now belong to this Yui.");
     }
 
     private ForageCommandResult Complete(ForageTask task, string code, string message, bool success)

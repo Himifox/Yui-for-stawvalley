@@ -577,7 +577,8 @@ internal sealed class CompanionInventoryStore
         int bagIndex = FindExactIndex(bag, weapon);
         if (bagIndex < 0)
             throw new InvalidOperationException("The exact melee weapon is no longer in the Yui bag.");
-        if (Game1.player.team.GetOrCreateGlobalInventoryMutex(GetNamespace(identity)).IsLocked())
+        var mutex = Game1.player.team.GetOrCreateGlobalInventoryMutex(GetNamespace(identity));
+        if (mutex.IsLocked() && !mutex.IsLockHeld())
             throw new InvalidOperationException("The Yui bag mutex became locked before the vanilla swing.");
         if (owner.Items.Count == 0)
             throw new InvalidOperationException("The acting owner has no inventory slot for the synchronous weapon lease.");
