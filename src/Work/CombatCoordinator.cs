@@ -628,7 +628,8 @@ internal sealed class CombatCoordinator
     {
         Rectangle targetBounds = target.GetBoundingBox();
         Vector2 targetCenter = Center(targetBounds);
-        int facing = FacingToward(projectedOwnerPosition, targetCenter);
+        Vector2 projectedStandingPixel = projectedOwnerPosition + (owner.StandingPixel.ToVector2() - owner.Position);
+        int facing = FacingToward(projectedStandingPixel, targetCenter);
         Rectangle ownerBounds = owner.GetBoundingBox();
         ownerBounds.Offset((int)(projectedOwnerPosition.X - owner.Position.X), (int)(projectedOwnerPosition.Y - owner.Position.Y));
         if (ownerBounds.Intersects(targetBounds))
