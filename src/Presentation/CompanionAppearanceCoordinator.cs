@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using StardewModdingAPI;
@@ -59,16 +58,6 @@ internal sealed class CompanionAppearanceCoordinator
     private readonly Dictionary<CompanionIdentity, string> lastFailures = new();
     private ulong lastUpdateTick;
 
-    private static readonly uint[] HairColors =
-    {
-        Packed(43, 38, 52), Packed(81, 50, 42), Packed(132, 78, 48), Packed(45, 72, 105), Packed(116, 58, 85), Packed(202, 153, 87),
-    };
-
-    private static readonly uint[] PantsColors =
-    {
-        Packed(39, 55, 89), Packed(59, 74, 69), Packed(81, 52, 69), Packed(58, 58, 64),
-    };
-
     public CompanionAppearanceCoordinator(CompanionRegistry registry, CompanionBodyBinder bodies, IMonitor monitor)
     {
         this.registry = registry;
@@ -87,20 +76,13 @@ internal sealed class CompanionAppearanceCoordinator
         {
             CompanionAppearanceProfile profile = record.Appearance;
             if (!profile.IsInitialized)
-                Generate(profile, hairs);
-            if (!Guid.TryParseExact(profile.ProfileId, "N", out _)
-                || !profileIds.Add(profile.ProfileId)
-                || profile.ProfileSchemaVersion != CompanionAppearanceProfile.CurrentProfileSchemaVersion
-                || profile.Generation < 1
-                || !CompanionBodyTypes.IsValid(profile.BodyType)
-                || !hairs.Contains(profile.HairStyle)
-                || profile.Skin is < 0 or > 23
-                || string.IsNullOrWhiteSpace(profile.ShirtId)
-                || string.IsNullOrWhiteSpace(profile.PantsId)
-                || string.IsNullOrWhiteSpace(profile.ShoeColorId)
-                || profile.AccessoryId != -1
-                || profile.HatQualifiedItemId.Length != 0)
-                return InventoryValidationResult.Failure("INVALID-APPEARANCE", $"{record.Identity} contains an invalid or duplicated appearance profile.");
+                CompanionGenerationPolicy.GenerateProfile(profile, hairs);
+            if (!CompanionGenerationPolicy.TryValidateProfile(profile, hairs, out string failure))
+                return InventoryValidationResult.Failure("INVALID-APPEARANCE", $"{record.Identity} contains an invalid appearance profile: {failure}");
+            if (!profileIds.Add(profile.ProfileId))
+                return InventoryValidationResult.Failure("DUPLICATE-APPEARANCE", $"{record.Identity} reuses appearance profile {profile.ProfileId}.");
+            if (record.DisplayName != CompanionGenerationPolicy.DisplayName)
+                return InventoryValidationResult.Failure("INVALID-DISPLAY-NAME", $"{record.Identity} must use the fixed display name {CompanionGenerationPolicy.DisplayName}.");
         }
         return InventoryValidationResult.Success($"Validated {this.registry.Count} persistent vanilla appearance profile(s).");
     }
@@ -108,7 +90,7 @@ internal sealed class CompanionAppearanceCoordinator
     public void EnsureProfile(CompanionRecord record)
     {
         if (!record.Appearance.IsInitialized)
-            Generate(record.Appearance, Farmer.GetAllHairstyleIndices());
+            CompanionGenerationPolicy.GenerateProfile(record.Appearance, Farmer.GetAllHairstyleIndices());
     }
 
     public void Prepare(CompanionIdentity identity, string operationId, string kind, Item? tool, int facing)
@@ -525,25 +507,6 @@ internal sealed class CompanionAppearanceCoordinator
         return farmer;
     }
 
-    private static void Generate(CompanionAppearanceProfile profile, IReadOnlyList<int> hairs)
-    {
-        profile.ProfileId = Guid.NewGuid().ToString("N");
-        profile.ProfileSchemaVersion = CompanionAppearanceProfile.CurrentProfileSchemaVersion;
-        profile.Generation = Math.Max(1, profile.Generation);
-        profile.BodyType = CompanionBodyTypes.Feminine;
-        profile.HairStyle = hairs.Count == 0 ? 0 : hairs[RandomNumberGenerator.GetInt32(hairs.Count)];
-        profile.Skin = RandomNumberGenerator.GetInt32(4, 18);
-        profile.ShirtId = "1000";
-        profile.PantsId = "0";
-        profile.ShoeColorId = "2";
-        profile.HairColor = HairColors[RandomNumberGenerator.GetInt32(HairColors.Length)];
-        profile.EyeColor = Packed(59, 105, 142);
-        profile.PantsColor = PantsColors[RandomNumberGenerator.GetInt32(PantsColors.Length)];
-        profile.AccessoryId = -1;
-        profile.HatQualifiedItemId = string.Empty;
-        profile.IsInitialized = true;
-    }
-
     private static int FacingFromDelta(Vector2 delta, int fallback)
     {
         if (Math.Abs(delta.X) > Math.Abs(delta.Y))
@@ -556,7 +519,6 @@ internal sealed class CompanionAppearanceCoordinator
         + (unchecked((ulong)identity.OwnerId) % IdleTurnVarianceTicks + (ulong)(identity.Slot * 37)) % IdleTurnVarianceTicks;
     private static int NormalizeFacing(int facing) => facing is >= 0 and <= 3 ? facing : 2;
     private static Vector2 ToolIconOffset(int facing) => facing switch { 0 => new Vector2(35f, -26f), 1 => new Vector2(48f, 30f), 2 => new Vector2(34f, 58f), _ => new Vector2(-12f, 30f) };
-    private static uint Packed(byte r, byte g, byte b) => new Color(r, g, b).PackedValue;
     private static Color Unpack(uint value) { Color color = default; color.PackedValue = value; return color; }
 
     private sealed class VisualRuntime

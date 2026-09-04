@@ -10,7 +10,7 @@ internal static class MultiplayerProtocol
     public const int MaxFieldCount = 10;
     public const int MaxFieldKeyLength = 32;
     public const int MaxFieldValueLength = 256;
-    public const int MaxCompanionsPerSnapshot = 64;
+    public const int MaxCompanionsPerSnapshot = CompanionGenerationPolicy.MaximumCompanions;
 
     public static class MessageTypes
     {
@@ -401,9 +401,9 @@ internal static class MultiplayerRequestValidator
             return ProtocolValidationResult.Failure("STALE-EPOCH", "The request belongs to another save session.");
         if (!Guid.TryParseExact(dto.RequestId, "N", out _))
             return ProtocolValidationResult.Failure("INVALID-REQUEST-ID", "RequestId must be one compact GUID.");
-        if (dto.SenderPlayerId == 0 || dto.SenderPlayerId != transportSenderId)
+        if (dto.SenderPlayerId <= 0 || dto.SenderPlayerId != transportSenderId)
             return ProtocolValidationResult.Failure("SENDER-MISMATCH", "The transport sender does not match SenderPlayerId.");
-        if (dto.OwnerId == 0 || dto.OwnerId != dto.SenderPlayerId)
+        if (dto.OwnerId <= 0 || dto.OwnerId != dto.SenderPlayerId)
             return ProtocolValidationResult.Failure("NOT-OWNER", "A farmhand may request only its own companion.");
         if (!CompanionIdentity.IsValidSlot(dto.Slot))
             return ProtocolValidationResult.Failure("SINGLE-COMPANION-PER-OWNER", "Each player may request only the canonical Slot 1 Yui.");

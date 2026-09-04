@@ -437,7 +437,7 @@ internal sealed class CompanionCommands
             this.Log(false, gate.Code, gate.Message);
             return;
         }
-        CompanionRecord record = this.registry.GetOrCreate(identity);
+        CompanionRecord record = this.registry.GetOrCreate(identity, owner);
         InventoryValidationResult starterResult = this.inventories.EnsureStarterTools(identity);
         if (!starterResult.IsSuccess)
         {

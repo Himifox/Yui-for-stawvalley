@@ -8,9 +8,9 @@ internal sealed class CompanionAppearanceProfile
 
     public int ProfileSchemaVersion { get; set; } = CurrentProfileSchemaVersion;
 
-    public int Generation { get; set; } = 1;
+    public int Generation { get; set; } = CompanionGenerationPolicy.ProfileGeneration;
 
-    public string BodyType { get; set; } = CompanionBodyTypes.Feminine;
+    public string BodyType { get; set; } = CompanionGenerationPolicy.BodyType;
 
     public string ProfileId { get; set; } = string.Empty;
 
@@ -18,11 +18,11 @@ internal sealed class CompanionAppearanceProfile
 
     public int Skin { get; set; }
 
-    public string ShirtId { get; set; } = "1000";
+    public string ShirtId { get; set; } = CompanionGenerationPolicy.ShirtId;
 
-    public string PantsId { get; set; } = "0";
+    public string PantsId { get; set; } = CompanionGenerationPolicy.PantsId;
 
-    public string ShoeColorId { get; set; } = "2";
+    public string ShoeColorId { get; set; } = CompanionGenerationPolicy.ShoeColorId;
 
     public uint HairColor { get; set; }
 
@@ -30,9 +30,9 @@ internal sealed class CompanionAppearanceProfile
 
     public uint PantsColor { get; set; }
 
-    public int AccessoryId { get; set; } = -1;
+    public int AccessoryId { get; set; } = CompanionGenerationPolicy.AccessoryId;
 
-    public string HatQualifiedItemId { get; set; } = string.Empty;
+    public string HatQualifiedItemId { get; set; } = CompanionGenerationPolicy.HatQualifiedItemId;
 }
 
 internal static class CompanionBodyTypes

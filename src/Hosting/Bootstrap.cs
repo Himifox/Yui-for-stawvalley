@@ -323,7 +323,11 @@ internal sealed class Bootstrap
                 this.monitor.Log($"HY-SAVE-{migration.Code}: {migration.Message} Companion writes are disabled for this save.", LogLevel.Error);
                 return;
             }
-            RegistryLoadResult result = this.registry.Load(data);
+            HashSet<long> knownOwnerIds = Game1.getAllFarmers()
+                .Select(farmer => farmer.UniqueMultiplayerID)
+                .Where(ownerId => ownerId > 0)
+                .ToHashSet();
+            RegistryLoadResult result = this.registry.Load(data, knownOwnerIds);
             if (!result.IsSuccess)
             {
                 this.monitor.Log($"HY-SAVE-{result.Code}: {result.Message} Companion writes are disabled for this save.", LogLevel.Error);
@@ -333,7 +337,7 @@ internal sealed class Bootstrap
             if (this.autoSummonOnFirstLoad && !this.registry.CompanionIntroductionCompleted)
             {
                 CompanionIdentity identity = CompanionIdentity.ForOwner(Game1.player.UniqueMultiplayerID);
-                CompanionRecord introduced = this.registry.GetOrCreate(identity);
+                CompanionRecord introduced = this.registry.GetOrCreate(identity, Game1.player);
                 introduced.WantsBody = true;
                 introduced.Mode = CompanionModes.Follow;
                 this.registry.MarkCompanionIntroductionCompleted();

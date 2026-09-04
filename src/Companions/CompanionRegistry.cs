@@ -36,7 +36,7 @@ internal sealed class CompanionRegistry
         this.CompanionIntroductionCompleted = false;
     }
 
-    public RegistryLoadResult Load(YuiToIsshoSaveData data)
+    public RegistryLoadResult Load(YuiToIsshoSaveData data, IReadOnlySet<long> knownOwnerIds)
     {
         this.records.Clear();
         this.authorizedChests.Clear();
@@ -46,6 +46,8 @@ internal sealed class CompanionRegistry
 
         if (data.Companions is null)
             return RegistryLoadResult.Failure("INVALID-DATA", "The companion collection is missing.");
+        if (data.Companions.Count > CompanionGenerationPolicy.MaximumCompanions || data.Companions.Count > knownOwnerIds.Count)
+            return RegistryLoadResult.Failure("INVALID-COMPANION-COUNT", "The save contains more companions than this farm can own.");
         data.AuthorizedChests ??= new List<AuthorizedChestRecord>();
 
         HashSet<AuthorizedChestIdentity> authorizationKeys = new();
@@ -53,7 +55,7 @@ internal sealed class CompanionRegistry
         foreach (AuthorizedChestRecord authorization in data.AuthorizedChests)
         {
             if (authorization is null
-                || authorization.OwnerId == 0
+                || !knownOwnerIds.Contains(authorization.OwnerId)
                 || string.IsNullOrWhiteSpace(authorization.LocationKey)
                 || authorization.LocationKey.Length > 256
                 || authorization.TileX < 0
@@ -68,14 +70,17 @@ internal sealed class CompanionRegistry
         var itemTokens = new HashSet<string>(StringComparer.Ordinal);
         foreach (CompanionRecord record in data.Companions)
         {
-            if (record is null || record.OwnerId == 0 || !CompanionIdentity.IsValidSlot(record.Slot))
-                return RegistryLoadResult.Failure("INVALID-IDENTITY", "A companion must use its Owner's single current identity.");
+            if (record is null)
+                return RegistryLoadResult.Failure("INVALID-IDENTITY", "The companion collection contains a null record.");
+            if (!CompanionGenerationPolicy.TryValidateIdentity(record.Identity, knownOwnerIds, out string identityFailure))
+                return RegistryLoadResult.Failure("INVALID-IDENTITY", identityFailure);
 
             CompanionIdentity identity = record.Identity;
             if (!loaded.TryAdd(identity, record))
                 return RegistryLoadResult.Failure("DUPLICATE-IDENTITY", $"Identity {identity} appears more than once.");
 
-            record.DisplayName = string.IsNullOrWhiteSpace(record.DisplayName) || record.DisplayName == "YuiToIssho" ? "Yui" : record.DisplayName;
+            if (record.DisplayName != CompanionGenerationPolicy.DisplayName)
+                return RegistryLoadResult.Failure("INVALID-DISPLAY-NAME", $"Identity {identity} must use the fixed display name {CompanionGenerationPolicy.DisplayName}.");
             record.Mode = CompanionModes.IsValid(record.Mode) ? record.Mode : CompanionModes.Wait;
             record.Inventory ??= new List<CompanionItemRecord>();
             record.PendingResponsibilities ??= new List<PendingResponsibilityRecord>();
@@ -231,17 +236,17 @@ internal sealed class CompanionRegistry
         return RegistryLoadResult.Success($"Loaded {this.records.Count} current companion record(s).");
     }
 
-    public CompanionRecord GetOrCreate(CompanionIdentity identity)
+    public CompanionRecord GetOrCreate(CompanionIdentity identity, StardewValley.Farmer owner)
     {
-        if (!identity.IsCanonical)
-            throw new ArgumentOutOfRangeException(nameof(identity), "Only the canonical Slot 1 identity can create a normal companion record.");
+        if (!CompanionGenerationPolicy.TryValidateOwnerBinding(identity, owner, out string failure))
+            throw new ArgumentOutOfRangeException(nameof(identity), failure);
         if (!this.records.TryGetValue(identity, out CompanionRecord? record))
         {
             record = new CompanionRecord
             {
                 OwnerId = identity.OwnerId,
                 Slot = identity.Slot,
-                DisplayName = "Yui",
+                DisplayName = CompanionGenerationPolicy.DisplayName,
             };
             this.records.Add(identity, record);
         }

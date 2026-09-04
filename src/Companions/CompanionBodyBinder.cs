@@ -33,8 +33,10 @@ internal sealed class CompanionBodyBinder
     public BodyBindResult Bind(CompanionRecord record, Farmer owner)
     {
         CompanionIdentity identity = record.Identity;
-        if (!identity.IsCanonical)
-            return BodyBindResult.Failure("SINGLE-COMPANION-PER-OWNER", "Only the Owner's current Yui identity can bind a world body.");
+        if (!CompanionGenerationPolicy.TryValidateOwnerBinding(identity, owner, out string ownerFailure))
+            return BodyBindResult.Failure("OWNER-MISMATCH", ownerFailure);
+        if (record.DisplayName != CompanionGenerationPolicy.DisplayName)
+            return BodyBindResult.Failure("INVALID-DISPLAY-NAME", $"The companion must use the fixed display name {CompanionGenerationPolicy.DisplayName}.");
         if (this.boundBodies.TryGetValue(identity, out NPC? existing) && existing.currentLocation is not null)
             return BodyBindResult.Success("ALREADY-SUMMONED", $"{identity} already has one body.");
 
