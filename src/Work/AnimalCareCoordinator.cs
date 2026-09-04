@@ -250,7 +250,7 @@ internal sealed class AnimalCareCoordinator
 
         this.inventories.RequestTransfer(
             task.Identity,
-            () => this.SettleProduceLocked(task, facing),
+            () => this.SettleProduceLocked(task),
             result =>
             {
                 if (!this.tasks.TryGetValue(task.Identity, out CareTask? current) || !ReferenceEquals(current, task))
@@ -312,7 +312,7 @@ internal sealed class AnimalCareCoordinator
         }
     }
 
-    private InventoryActionResult SettleProduceLocked(CareTask task, int facing)
+    private InventoryActionResult SettleProduceLocked(CareTask task)
     {
         if (!this.execution.IsCurrent(task.Session))
             return InventoryActionResult.Failure("SESSION-NOT-CURRENT", "The animal-care session is no longer current.");
@@ -320,6 +320,16 @@ internal sealed class AnimalCareCoordinator
             return InventoryActionResult.Failure("ANIMAL-STATE-CHANGED", stateFailure);
         if (!this.bodies.TryGetBody(task.Identity, out NPC body))
             return InventoryActionResult.Failure("BODY-INVALID", "The companion body disappeared while the bag lock was pending.");
+        FarmAnimal animal = (FarmAnimal)task.Target;
+        if (!ReferenceEquals(body.currentLocation, task.Location)
+            || !ReferenceEquals(animal.currentLocation, task.Location)
+            || ManhattanDistance(body.TilePoint, animal.TilePoint) != 1)
+        {
+            return InventoryActionResult.Failure(
+                "ANIMAL-POSITION-CHANGED",
+                "The companion and animal are no longer cardinally adjacent after the bag lock was acquired."
+            );
+        }
         if (!OwnerContextLease.CanProject(task.Owner))
             return InventoryActionResult.Failure("OWNER-BUSY", "The owner started another action while animal care was waiting for the bag lock; the animal remains unchanged.");
         if (this.inventories.Count(task.Identity) >= CompanionInventoryStore.Capacity)
@@ -332,6 +342,8 @@ internal sealed class AnimalCareCoordinator
         if (!cost.IsSuccess)
             return InventoryActionResult.Failure(cost.Result.Code, cost.Result.Message);
 
+        int facing = FacingToward(body.Tile, animal.Tile);
+        body.faceDirection(facing);
         string visualKind = task.Action == CareAction.Milk ? AppearanceActionKinds.Milking : AppearanceActionKinds.Shearing;
         this.appearance.Prepare(task.Identity, task.OperationId, visualKind, task.Tool, facing);
         IReadOnlyList<Item> outputs;
@@ -341,7 +353,6 @@ internal sealed class AnimalCareCoordinator
         {
             try
             {
-                FarmAnimal animal = (FarmAnimal)task.Target;
                 if (task.Tool is MilkPail pail)
                 {
                     FarmAnimal? previous = pail.animal;
