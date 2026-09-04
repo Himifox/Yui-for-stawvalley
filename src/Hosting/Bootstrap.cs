@@ -85,11 +85,11 @@ internal sealed class Bootstrap
         this.bodies = new CompanionBodyBinder(monitor);
         this.vitals = new CompanionVitalsCoordinator(this.registry, this.bodies, this.inventories, monitor, () => this.State, () => this.saveDataWritable);
         this.appearance = new CompanionAppearanceCoordinator(this.registry, this.bodies, monitor);
-        this.following = new FollowCoordinator(this.bodies, this.appearance.IsPresenting, monitor);
+        this.taskNavigation = new TaskNavigationService(this.bodies);
+        this.following = new FollowCoordinator(this.bodies, this.taskNavigation, this.appearance.IsPresenting, monitor);
         this.networkBodies = new CompanionNetworkBodyResolver();
         this.projection = new CompanionProjectionCoordinator(this.registry, this.bodies, this.inventories, this.appearance, this.networkBodies, monitor);
         this.taskExecution = new TaskExecutionService(this.registry, this.bodies, monitor);
-        this.taskNavigation = new TaskNavigationService(this.bodies);
         this.watering = new WateringCoordinator(this.bodies, this.inventories, this.vitals, this.appearance, this.taskExecution, this.taskNavigation, monitor);
         this.chopping = new ChoppingCoordinator(this.bodies, this.inventories, this.vitals, this.appearance, this.taskExecution, this.taskNavigation, monitor);
         this.mining = new MiningCoordinator(this.bodies, this.inventories, this.vitals, this.appearance, this.taskExecution, this.taskNavigation, monitor);

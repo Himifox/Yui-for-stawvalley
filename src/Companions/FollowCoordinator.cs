@@ -9,7 +9,8 @@ internal sealed class FollowCoordinator
 {
     private const int ComfortableDistance = 3;
     private const int NearDistance = 5;
-    private const int FarDistance = NearDistance * 3;
+    private const int FarDistance = 8;
+    private const int HardRegroupDistance = 12;
     private const int NearMovementSpeed = 3;
     private const int FarMovementSpeed = 8;
     private const int LocationRegroupDelayTicks = 30;
@@ -19,13 +20,15 @@ internal sealed class FollowCoordinator
     private const int StuckTimeoutTicks = 300;
 
     private readonly CompanionBodyBinder bodies;
+    private readonly TaskNavigationService navigation;
     private readonly Func<CompanionIdentity, bool> isPresenting;
     private readonly IMonitor monitor;
     private readonly Dictionary<CompanionIdentity, FollowRuntime> runtime = new();
 
-    public FollowCoordinator(CompanionBodyBinder bodies, Func<CompanionIdentity, bool> isPresenting, IMonitor monitor)
+    public FollowCoordinator(CompanionBodyBinder bodies, TaskNavigationService navigation, Func<CompanionIdentity, bool> isPresenting, IMonitor monitor)
     {
         this.bodies = bodies;
+        this.navigation = navigation;
         this.isPresenting = isPresenting;
         this.monitor = monitor;
     }
@@ -61,8 +64,14 @@ internal sealed class FollowCoordinator
     private void UpdateOne(CompanionRecord record, ulong tick)
     {
         CompanionIdentity identity = record.Identity;
-        if (!string.IsNullOrWhiteSpace(record.ActiveTransactionId) || this.isPresenting(identity))
+        if (!string.IsNullOrWhiteSpace(record.ActiveTransactionId))
         {
+            this.runtime.Remove(identity);
+            return;
+        }
+        if (this.isPresenting(identity))
+        {
+            this.bodies.Halt(identity);
             this.runtime.Remove(identity);
             return;
         }
@@ -111,6 +120,16 @@ internal sealed class FollowCoordinator
 
         state.LocationMismatchSinceTick = null;
         int tileDistance = ManhattanDistance(body.TilePoint, owner.TilePoint);
+        if (tileDistance > HardRegroupDistance)
+        {
+            this.bodies.Halt(identity);
+            BodyBindResult result = this.bodies.Rebind(record, owner);
+            state.Reset(owner.Position, tick, tick + MinimumRepathDelayTicks);
+            if (!result.IsSuccess)
+                this.monitor.Log($"HY-NAV-{result.Code}: {result.Message}", LogLevel.Warn);
+            return;
+        }
+
         if (tileDistance <= ComfortableDistance || (state.IsHoldingPosition && tileDistance <= NearDistance))
         {
             this.bodies.Halt(identity);
@@ -126,21 +145,43 @@ internal sealed class FollowCoordinator
             : tileDistance > FarDistance ? FarMovementSpeed : CompanionBodyBinder.DefaultMovementSpeed;
 
         this.TrackProgress(identity, body, state, tick);
+        if (body.controller is not null
+            && state.PathOwnerTile is Point pathOwnerTile
+            && ManhattanDistance(pathOwnerTile, owner.TilePoint) > ComfortableDistance
+            && tick >= state.NextPathTick)
+        {
+            this.bodies.Halt(identity);
+            state.PathOwnerTile = null;
+        }
         if (tick < state.NextPathTick || body.controller is not null)
             return;
 
-        Vector2 target = FindTargetTile(owner.currentLocation, owner.Tile);
-        body.controller = new PathFindController(
+        Vector2? target = this.FindTargetTile(body, owner.currentLocation, owner.Tile, owner.FacingDirection);
+        if (target is null)
+        {
+            this.RegisterFailure(identity, body, state, tick);
+            return;
+        }
+
+        var controller = new PathFindController(
             body,
             owner.currentLocation,
-            target.ToPoint(),
+            target.Value.ToPoint(),
             owner.FacingDirection,
             null,
             PathSearchLimit
         );
+        if (controller.pathToEndPoint is not { Count: > 0 })
+        {
+            this.RegisterFailure(identity, body, state, tick);
+            return;
+        }
+
+        body.controller = controller;
         state.LastPosition = body.Position;
         state.LastProgressTick = tick;
         state.NextPathTick = tick + MinimumRepathDelayTicks;
+        state.PathOwnerTile = owner.TilePoint;
     }
 
     private void TrackProgress(CompanionIdentity identity, NPC body, FollowRuntime state, ulong tick)
@@ -163,9 +204,16 @@ internal sealed class FollowCoordinator
         if (tick - state.LastProgressTick < StuckTimeoutTicks)
             return;
 
-        state.LastProgressTick = tick;
-        state.ConsecutiveFailures++;
+        this.RegisterFailure(identity, body, state, tick);
+    }
+
+    private void RegisterFailure(CompanionIdentity identity, NPC body, FollowRuntime state, ulong tick)
+    {
         this.bodies.Halt(identity);
+        state.LastPosition = body.Position;
+        state.LastProgressTick = tick;
+        state.PathOwnerTile = null;
+        state.ConsecutiveFailures++;
         int delay = Math.Min(MaximumRepathDelayTicks, MinimumRepathDelayTicks * state.ConsecutiveFailures);
         state.NextPathTick = tick + (ulong)delay;
         if (state.ConsecutiveFailures == 3)
@@ -182,19 +230,23 @@ internal sealed class FollowCoordinator
         return state;
     }
 
-    private static Vector2 FindTargetTile(GameLocation location, Vector2 ownerTile)
+    private Vector2? FindTargetTile(NPC body, GameLocation location, Vector2 ownerTile, int ownerFacing)
     {
-        Vector2[] offsets = { new(-2, 0), new(0, 2), new(2, 0), new(0, -2) };
-
-        foreach (Vector2 offset in offsets)
+        Vector2[] offsets =
         {
-            Vector2 candidate = ownerTile + offset;
-            if (location.isTileLocationOpen(candidate)
-                && location.characters.All(character => character.Tile != candidate))
+            new(-2, 0), new(0, 2), new(2, 0), new(0, -2),
+            new(-1, 0), new(0, 1), new(1, 0), new(0, -1),
+        };
+
+        foreach (Vector2 candidate in offsets
+            .Select(offset => ownerTile + offset)
+            .OrderBy(candidate => ManhattanDistance(candidate.ToPoint(), body.TilePoint)))
+        {
+            if (this.navigation.CanReach(body, location, candidate, ownerFacing, PathSearchLimit))
                 return candidate;
         }
 
-        return ownerTile;
+        return null;
     }
 
     private static int ManhattanDistance(Point left, Point right) => Math.Abs(left.X - right.X) + Math.Abs(left.Y - right.Y);
@@ -227,6 +279,8 @@ internal sealed class FollowCoordinator
 
         public bool IsHoldingPosition { get; set; }
 
+        public Point? PathOwnerTile { get; set; }
+
         public void Hold(Vector2 position, ulong tick, ulong nextPathTick)
         {
             this.LastPosition = position;
@@ -235,6 +289,7 @@ internal sealed class FollowCoordinator
             this.NextPathTick = nextPathTick;
             this.LocationMismatchSinceTick = null;
             this.IsHoldingPosition = true;
+            this.PathOwnerTile = null;
         }
 
         public void Reset(Vector2 position, ulong tick, ulong nextPathTick)
@@ -245,6 +300,7 @@ internal sealed class FollowCoordinator
             this.NextPathTick = nextPathTick;
             this.LocationMismatchSinceTick = null;
             this.IsHoldingPosition = false;
+            this.PathOwnerTile = null;
         }
     }
 }
