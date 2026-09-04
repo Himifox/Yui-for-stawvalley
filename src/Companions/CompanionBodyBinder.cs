@@ -51,7 +51,10 @@ internal sealed class CompanionBodyBinder
             Position = spawnTile * Game1.tileSize,
             currentLocation = owner.currentLocation,
             Speed = DefaultMovementSpeed,
-            SimpleNonVillagerNPC = true,
+            // PathFindController routes movement and final facing through Character.faceDirection,
+            // which intentionally ignores simple non-villager NPCs. This body has no NPC data and
+            // remains invisible, so keep the normal direction pipeline enabled for authoritative state.
+            SimpleNonVillagerNPC = false,
             AllowDynamicAppearance = false,
             IsInvisible = true,
             HideShadow = true,
