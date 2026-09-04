@@ -284,13 +284,8 @@ internal sealed class DeliveryCoordinator
         this.tasks.Remove(task.Session.Identity);
     }
 
-    private static Vector2? FindApproachTile(GameLocation location, Vector2 target, NPC body)
-    {
-        Vector2[] candidates = { target + new Vector2(1, 0), target + new Vector2(-1, 0), target + new Vector2(0, 1), target + new Vector2(0, -1) };
-        return candidates.Where(tile => location.isTileLocationOpen(tile)
-                && location.characters.All(character => ReferenceEquals(character, body) || character.Tile != tile))
-            .OrderBy(tile => ManhattanDistance(tile.ToPoint(), body.TilePoint)).Cast<Vector2?>().FirstOrDefault();
-    }
+    private Vector2? FindApproachTile(GameLocation location, Vector2 target, NPC body) =>
+        this.navigation.FindReachableCardinalApproach(body, location, target, PathSearchLimit);
 
     private static int FacingToward(Vector2 from, Vector2 to)
     {

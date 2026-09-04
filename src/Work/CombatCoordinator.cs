@@ -69,6 +69,7 @@ internal sealed class CombatCoordinator
     private readonly CompanionVitalsCoordinator vitals;
     private readonly CompanionAppearanceCoordinator appearance;
     private readonly TaskExecutionService execution;
+    private readonly TaskNavigationService navigation;
     private readonly IMonitor monitor;
     private readonly Dictionary<CompanionIdentity, CombatTask> tasks = new();
     private readonly Dictionary<string, CachedCombatOption> options = new(StringComparer.Ordinal);
@@ -77,13 +78,14 @@ internal sealed class CombatCoordinator
     private readonly Queue<string> damageEventOrder = new();
     private ulong hostTick;
 
-    public CombatCoordinator(CompanionBodyBinder bodies, CompanionInventoryStore inventories, CompanionVitalsCoordinator vitals, CompanionAppearanceCoordinator appearance, TaskExecutionService execution, IMonitor monitor)
+    public CombatCoordinator(CompanionBodyBinder bodies, CompanionInventoryStore inventories, CompanionVitalsCoordinator vitals, CompanionAppearanceCoordinator appearance, TaskExecutionService execution, TaskNavigationService navigation, IMonitor monitor)
     {
         this.bodies = bodies;
         this.inventories = inventories;
         this.vitals = vitals;
         this.appearance = appearance;
         this.execution = execution;
+        this.navigation = navigation;
         this.monitor = monitor;
     }
 
@@ -580,7 +582,7 @@ internal sealed class CombatCoordinator
         return FromExecution(result);
     }
 
-    private static Vector2? FindAttackTile(CombatTask task, NPC body)
+    private Vector2? FindAttackTile(CombatTask task, NPC body)
     {
         Rectangle targetBounds = task.Target.GetBoundingBox();
         int minimumX = Math.Max(0, (targetBounds.Left / Game1.tileSize) - AttackSearchRadius);
@@ -594,7 +596,7 @@ internal sealed class CombatCoordinator
             for (int y = minimumY; y <= maximumY; y++)
             {
                 Vector2 tile = new(x, y);
-                if (!task.Location.isTileOnMap(tile) || !task.Location.isTileLocationOpen(tile))
+                if (!CompanionPathing.IsStandable(body, task.Location, tile))
                     continue;
                 Vector2 projectedPosition = tile * Game1.tileSize;
                 if (ProjectedBodyOverlapsCharacter(task, body, projectedPosition))
@@ -606,7 +608,8 @@ internal sealed class CombatCoordinator
                     && !PointInScope(projectedPosition + new Vector2(Game1.tileSize / 2f), defenseAnchor, CounterStrikeRadius))
                     continue;
                 if (TryCreateAttackSetup(task, projectedPosition, requireIsolated: !task.EnforceGuardScope, out AttackSetup candidateSetup)
-                    && IsSetupAllowed(task, candidateSetup))
+                    && IsSetupAllowed(task, candidateSetup)
+                    && this.navigation.CanReach(body, task.Location, tile, candidateSetup.Facing, PathSearchLimit))
                     candidates.Add(tile);
             }
         }
@@ -656,7 +659,7 @@ internal sealed class CombatCoordinator
         return true;
     }
 
-    private static bool CanIsolate(NPC body, Farmer owner, GameLocation location, Monster target, MeleeWeapon weapon)
+    private bool CanIsolate(NPC body, Farmer owner, GameLocation location, Monster target, MeleeWeapon weapon)
     {
         Rectangle targetBounds = target.GetBoundingBox();
         int minimumX = Math.Max(0, (targetBounds.Left / Game1.tileSize) - AttackSearchRadius);
@@ -668,14 +671,15 @@ internal sealed class CombatCoordinator
             for (int y = minimumY; y <= maximumY; y++)
             {
                 Vector2 tile = new(x, y);
-                if (!location.isTileOnMap(tile) || !location.isTileLocationOpen(tile))
+                if (!CompanionPathing.IsStandable(body, location, tile))
                     continue;
                 Vector2 position = tile * Game1.tileSize;
                 Rectangle projectedBounds = body.GetBoundingBox();
                 projectedBounds.Offset((int)(position.X - body.Position.X), (int)(position.Y - body.Position.Y));
                 if (location.characters.Any(character => !ReferenceEquals(character, body) && character.GetBoundingBox().Intersects(projectedBounds)))
                     continue;
-                if (TryCreateAttackSetup(owner, location, target, weapon, position, requireIsolated: true, out _))
+                if (TryCreateAttackSetup(owner, location, target, weapon, position, requireIsolated: true, out AttackSetup setup)
+                    && this.navigation.CanReach(body, location, tile, setup.Facing, PathSearchLimit))
                     return true;
             }
         }

@@ -171,7 +171,7 @@ internal sealed class AnimalCareCoordinator
         if (!progress.CanIssuePath)
             return;
 
-        Vector2? approach = FindApproachTile(task.Location, targetTile, body, resolved);
+        Vector2? approach = FindApproachTile(task.Location, targetTile, body);
         if (approach is null)
         {
             this.Complete(task, "NO-LEGAL-NEIGHBOR", "The moving animal had no legal neighboring interaction tile.", false);
@@ -467,14 +467,8 @@ internal sealed class AnimalCareCoordinator
 
     private static bool TryParseAction(string raw, out CareAction action) => Enum.TryParse(raw, true, out action);
 
-    private static Vector2? FindApproachTile(GameLocation location, Vector2 target, NPC body, Character caredFor)
-    {
-        Vector2[] candidates = { target + new Vector2(1, 0), target + new Vector2(-1, 0), target + new Vector2(0, 1), target + new Vector2(0, -1) };
-        return candidates.Where(tile => location.isTileLocationOpen(tile)
-                && location.characters.All(character => ReferenceEquals(character, body) || ReferenceEquals(character, caredFor) || character.Tile != tile)
-                && location.animals.Values.All(animal => ReferenceEquals(animal, caredFor) || animal.Tile != tile))
-            .OrderBy(tile => ManhattanDistance(tile.ToPoint(), body.TilePoint)).Cast<Vector2?>().FirstOrDefault();
-    }
+    private Vector2? FindApproachTile(GameLocation location, Vector2 target, NPC body) =>
+        this.navigation.FindReachableCardinalApproach(body, location, target, PathSearchLimit);
 
     private static int FacingToward(Vector2 from, Vector2 to)
     {

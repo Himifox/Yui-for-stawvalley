@@ -36,6 +36,7 @@ internal sealed class CompanionStorageCoordinator
     private readonly CompanionRegistry registry;
     private readonly CompanionBodyBinder bodies;
     private readonly CompanionInventoryStore inventories;
+    private readonly TaskNavigationService navigation;
     private readonly IMonitor monitor;
     private readonly Func<LifecycleState> getLifecycleState;
     private readonly Func<bool> canMutateSave;
@@ -47,6 +48,7 @@ internal sealed class CompanionStorageCoordinator
         CompanionRegistry registry,
         CompanionBodyBinder bodies,
         CompanionInventoryStore inventories,
+        TaskNavigationService navigation,
         IMonitor monitor,
         Func<LifecycleState> getLifecycleState,
         Func<bool> canMutateSave)
@@ -54,6 +56,7 @@ internal sealed class CompanionStorageCoordinator
         this.registry = registry;
         this.bodies = bodies;
         this.inventories = inventories;
+        this.navigation = navigation;
         this.monitor = monitor;
         this.getLifecycleState = getLifecycleState;
         this.canMutateSave = canMutateSave;
@@ -1090,19 +1093,8 @@ internal sealed class CompanionStorageCoordinator
         return destination.canStackWith(comparison);
     }
 
-    private static Vector2? FindApproach(GameLocation location, Vector2 chestTile, NPC body)
-    {
-        Vector2[] directions = { new(1, 0), new(-1, 0), new(0, 1), new(0, -1) };
-        return directions.Select(direction => chestTile + direction)
-            .Where(tile => location.isTileOnMap(tile)
-                && (tile == body.Tile || location.isTileLocationOpen(tile))
-                && location.characters.All(character => ReferenceEquals(character, body) || character.Tile != tile))
-            .OrderBy(tile => Manhattan(body.Tile, tile))
-            .ThenBy(tile => tile.X)
-            .ThenBy(tile => tile.Y)
-            .Select(tile => (Vector2?)tile)
-            .FirstOrDefault();
-    }
+    private Vector2? FindApproach(GameLocation location, Vector2 chestTile, NPC body) =>
+        this.navigation.FindReachableCardinalApproach(body, location, chestTile, SearchLimit);
 
     private static int Manhattan(Vector2 first, Vector2 second) => (int)(Math.Abs(first.X - second.X) + Math.Abs(first.Y - second.Y));
 

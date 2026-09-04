@@ -98,8 +98,8 @@ internal sealed class Bootstrap
         this.mowing = new MowingCoordinator(this.bodies, this.inventories, this.vitals, this.appearance, this.taskExecution, this.taskNavigation, monitor);
         this.digging = new DiggingCoordinator(this.bodies, this.inventories, this.vitals, this.appearance, this.taskExecution, this.taskNavigation, monitor);
         this.animalCare = new AnimalCareCoordinator(this.bodies, this.inventories, this.vitals, this.appearance, this.taskExecution, this.taskNavigation, monitor);
-        this.fishing = new FishingCoordinator(this.bodies, this.inventories, this.vitals, this.appearance, this.taskExecution, monitor);
-        this.combat = new CombatCoordinator(this.bodies, this.inventories, this.vitals, this.appearance, this.taskExecution, monitor);
+        this.fishing = new FishingCoordinator(this.bodies, this.inventories, this.vitals, this.appearance, this.taskExecution, this.taskNavigation, monitor);
+        this.combat = new CombatCoordinator(this.bodies, this.inventories, this.vitals, this.appearance, this.taskExecution, this.taskNavigation, monitor);
         this.delivery = new DeliveryCoordinator(this.registry, this.bodies, this.inventories, this.appearance, this.taskExecution, this.taskNavigation, monitor);
         this.workRuntime = new WorkRuntimeModule(
             this.watering,
@@ -113,7 +113,7 @@ internal sealed class Bootstrap
             this.fishing,
             this.combat,
             this.delivery);
-        this.storage = new CompanionStorageCoordinator(this.registry, this.bodies, this.inventories, monitor, () => this.State, () => this.saveDataWritable);
+        this.storage = new CompanionStorageCoordinator(this.registry, this.bodies, this.inventories, this.taskNavigation, monitor, () => this.State, () => this.saveDataWritable);
         this.plantingPreview = new PlantingPreviewService(this.inventories, this.storage, this.bodies);
         this.planting = new PlantingCoordinator(this.registry, this.bodies, this.inventories, this.storage, this.plantingPreview, this.taskExecution, this.taskNavigation, this.appearance, monitor);
         this.crafting = new CraftingCoordinator(this.registry, this.inventories, this.bodies, this.storage, this.appearance, monitor);

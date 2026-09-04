@@ -177,8 +177,7 @@ internal sealed class MowingCoordinator
         if (!progress.CanIssuePath)
             return;
 
-        if (!task.Location.isTileLocationOpen(task.ApproachTile)
-            || task.Location.characters.Any(character => !ReferenceEquals(character, body) && character.Tile == task.ApproachTile))
+        if (!CompanionPathing.IsStandable(body, task.Location, task.ApproachTile))
         {
             this.Complete(task, "APPROACH-BLOCKED", "The reserved standing tile became blocked.", false);
             return;
@@ -402,8 +401,7 @@ internal sealed class MowingCoordinator
         foreach (Vector2 candidate in candidates)
         {
             bool alreadyStanding = candidate.ToPoint() == currentTile;
-            if ((!alreadyStanding && !location.isTileLocationOpen(candidate))
-                || location.characters.Any(character => !ReferenceEquals(character, body) && character.Tile == candidate))
+            if (!alreadyStanding && !CompanionPathing.IsStandable(body, location, candidate))
                 continue;
 
             Vector2 projectedPosition = ProjectPositionToTile(body, candidate);

@@ -689,9 +689,7 @@ internal sealed class CompanionVitalsCoordinator
 
         Vector2[] directions = { new(1, 0), new(-1, 0), new(0, 1), new(0, -1) };
         Vector2? destination = directions.Select(direction => body.Tile + direction)
-            .Where(tile => body.currentLocation.isTileOnMap(tile)
-                && body.currentLocation.isTileLocationOpen(tile)
-                && body.currentLocation.characters.All(character => ReferenceEquals(character, body) || character.Tile != tile))
+            .Where(tile => CompanionPathing.CanReach(body, body.currentLocation, tile, body.FacingDirection, RetreatPathLimit))
             .OrderByDescending(tile => Vector2.DistanceSquared(tile, nearest.Tile))
             .ThenBy(tile => tile.X)
             .ThenBy(tile => tile.Y)

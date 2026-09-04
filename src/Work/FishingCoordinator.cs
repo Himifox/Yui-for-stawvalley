@@ -30,16 +30,18 @@ internal sealed class FishingCoordinator
     private readonly CompanionVitalsCoordinator vitals;
     private readonly CompanionAppearanceCoordinator appearance;
     private readonly TaskExecutionService execution;
+    private readonly TaskNavigationService navigation;
     private readonly IMonitor monitor;
     private readonly Dictionary<CompanionIdentity, FishingTask> tasks = new();
 
-    public FishingCoordinator(CompanionBodyBinder bodies, CompanionInventoryStore inventories, CompanionVitalsCoordinator vitals, CompanionAppearanceCoordinator appearance, TaskExecutionService execution, IMonitor monitor)
+    public FishingCoordinator(CompanionBodyBinder bodies, CompanionInventoryStore inventories, CompanionVitalsCoordinator vitals, CompanionAppearanceCoordinator appearance, TaskExecutionService execution, TaskNavigationService navigation, IMonitor monitor)
     {
         this.bodies = bodies;
         this.inventories = inventories;
         this.vitals = vitals;
         this.appearance = appearance;
         this.execution = execution;
+        this.navigation = navigation;
         this.monitor = monitor;
     }
 
@@ -181,8 +183,7 @@ internal sealed class FishingCoordinator
         this.TrackProgress(task, body, tick);
         if (!this.tasks.ContainsKey(task.Identity) || tick < task.NextPathTick || body.controller is not null)
             return;
-        if (!task.Location.isTileLocationOpen(task.ApproachTile)
-            || task.Location.characters.Any(character => !ReferenceEquals(character, body) && character.Tile == task.ApproachTile))
+        if (!CompanionPathing.IsStandable(body, task.Location, task.ApproachTile))
         {
             this.Complete(task, "CAST-POSITION-BLOCKED", "The fixed land tile for this cast became blocked.", false);
             return;
@@ -294,7 +295,7 @@ internal sealed class FishingCoordinator
         return current.Count == task.Tackle.Count && current.Zip(task.Tackle).All(pair => ReferenceEquals(pair.First, pair.Second));
     }
 
-    private static Vector2? FindFishingApproach(GameLocation location, Vector2 waterTile, NPC body)
+    private Vector2? FindFishingApproach(GameLocation location, Vector2 waterTile, NPC body)
     {
         Vector2[] directions = { new(1, 0), new(-1, 0), new(0, 1), new(0, -1) };
         List<Vector2> candidates = new();
@@ -303,10 +304,13 @@ internal sealed class FishingCoordinator
             for (int distance = 1; distance <= MaximumCastDistance; distance++)
             {
                 Vector2 candidate = waterTile + (direction * distance);
+                if (!location.isTileOnMap(candidate))
+                    break;
                 if (location.isWaterTile((int)candidate.X, (int)candidate.Y))
                     continue;
-                if (IsStableCastLine(location, candidate, waterTile) && location.isTileLocationOpen(candidate)
-                    && location.characters.All(character => ReferenceEquals(character, body) || character.Tile != candidate))
+                if (IsStableCastLine(location, candidate, waterTile)
+                    && CompanionPathing.IsStandable(body, location, candidate)
+                    && this.navigation.CanReach(body, location, candidate, FacingToward(candidate, waterTile), PathSearchLimit))
                     candidates.Add(candidate);
                 break;
             }

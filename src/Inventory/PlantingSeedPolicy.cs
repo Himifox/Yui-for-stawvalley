@@ -417,9 +417,7 @@ internal sealed class PlantingPreviewService
         Vector2[] directions = { new(1, 0), new(-1, 0), new(0, 1), new(0, -1) };
         return directions.Select(direction => tile + direction).Any(candidate =>
             location.isTileOnMap(candidate)
-            && location.isTileLocationOpen(candidate)
-            && location.characters.All(character => character.Tile != candidate)
-            && location.farmers.All(farmer => farmer.Tile != candidate));
+            && !location.IsTileBlockedBy(candidate));
     }
 
     private void Prune(DateTimeOffset now)

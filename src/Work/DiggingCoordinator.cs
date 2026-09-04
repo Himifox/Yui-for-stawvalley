@@ -177,8 +177,7 @@ internal sealed class DiggingCoordinator
         if (!progress.CanIssuePath)
             return;
 
-        if (!task.Location.isTileLocationOpen(task.ApproachTile)
-            || task.Location.characters.Any(character => !ReferenceEquals(character, body) && character.Tile == task.ApproachTile))
+        if (!CompanionPathing.IsStandable(body, task.Location, task.ApproachTile))
         {
             this.Complete(task, "APPROACH-BLOCKED", "The reserved standing tile became blocked.", false);
             return;
@@ -360,22 +359,8 @@ internal sealed class DiggingCoordinator
     private static string ExpectedQualifiedId(DigTargetKind kind) =>
         kind == DigTargetKind.ArtifactSpot ? ArtifactSpotId : SeedSpotId;
 
-    private static Vector2? FindApproachTile(GameLocation location, Vector2 target, NPC body)
-    {
-        Vector2[] candidates =
-        {
-            target + new Vector2(1, 0),
-            target + new Vector2(-1, 0),
-            target + new Vector2(0, 1),
-            target + new Vector2(0, -1),
-        };
-        return candidates
-            .Where(candidate => location.isTileLocationOpen(candidate)
-                && location.characters.All(character => ReferenceEquals(character, body) || character.Tile != candidate))
-            .OrderBy(candidate => ManhattanDistance(candidate.ToPoint(), body.TilePoint))
-            .Cast<Vector2?>()
-            .FirstOrDefault();
-    }
+    private Vector2? FindApproachTile(GameLocation location, Vector2 target, NPC body) =>
+        this.navigation.FindReachableCardinalApproach(body, location, target, PathSearchLimit);
 
     private static int FacingToward(Vector2 from, Vector2 to)
     {
