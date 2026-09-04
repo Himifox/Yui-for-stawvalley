@@ -239,6 +239,7 @@ internal sealed class HarvestCoordinator
         IReadOnlyList<Item> outputs;
         bool removeCrop = false;
         Exception? settlementError = null;
+        WorldDebrisCapture worldDrops = WorldDebrisCapture.Begin(task.Location, Game1.currentLocation);
         using (OwnerContextLease context = OwnerContextLease.Project(engineRecipient, body.Position, facing, task.Location))
         using (FarmerInventoryIsolationLease inventory = FarmerInventoryIsolationLease.Begin(engineRecipient))
         {
@@ -266,6 +267,10 @@ internal sealed class HarvestCoordinator
             if (!routed.IsSuccess)
                 return routed;
         }
+        WorldDebrisRouteResult worldResult = worldDrops.RouteNewLocked(task.Identity, this.inventories);
+        if (!worldResult.Result.IsSuccess)
+            return worldResult.Result;
+        int routedStacks = outputs.Count + worldResult.StackCount;
         if (settlementError is not null)
             return InventoryActionResult.Failure("SETTLEMENT-ERROR", $"Harvest stopped without retry after {settlementError.GetType().Name}.");
 
@@ -273,15 +278,15 @@ internal sealed class HarvestCoordinator
         {
             if (ReferenceEquals(task.TargetDirt.crop, task.TargetCrop))
                 task.TargetDirt.crop = null;
-            if (task.Method == HarvestMethod.Grab && outputs.Count == 0)
-                return InventoryActionResult.Failure("OUTPUT-MISSING", "Vanilla removed the hand-harvested crop without a traceable inventory output.");
-            return InventoryActionResult.Success("COMMITTED", $"Harvested {task.Target} once using {task.Method}; routed {outputs.Count} exact stack(s) to Yui responsibility.");
+            if (routedStacks == 0)
+                return InventoryActionResult.Failure("OUTPUT-MISSING", "Vanilla removed the crop without a traceable inventory or world-debris output.");
+            return InventoryActionResult.Success("COMMITTED", $"Harvested {task.Target} once using {task.Method}; routed {routedStacks} exact stack(s) to Yui responsibility.");
         }
         if (ReferenceEquals(task.TargetDirt.crop, task.TargetCrop) && !IsHarvestReady(task.TargetCrop))
         {
-            if (task.Method == HarvestMethod.Grab && outputs.Count == 0)
-                return InventoryActionResult.Failure("OUTPUT-MISSING", "Vanilla reset the crop without a traceable hand-harvest output.");
-            return InventoryActionResult.Success("COMMITTED-REGROWTH", $"Harvested {task.Target} once; vanilla retained the regrowing crop and routed {outputs.Count} stack(s). ");
+            if (routedStacks == 0)
+                return InventoryActionResult.Failure("OUTPUT-MISSING", "Vanilla reset the crop without a traceable inventory or world-debris output.");
+            return InventoryActionResult.Success("COMMITTED-REGROWTH", $"Harvested {task.Target} once; vanilla retained the regrowing crop and routed {routedStacks} stack(s).");
         }
         if (ReferenceEquals(task.TargetDirt.crop, task.TargetCrop) && IsHarvestReady(task.TargetCrop))
             return InventoryActionResult.Failure("VANILLA-REJECTED", "Vanilla rejected the harvest and the mature crop remains unchanged.");
