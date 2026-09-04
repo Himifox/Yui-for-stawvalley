@@ -138,7 +138,6 @@ internal sealed class ForageCoordinator
             return;
 
         int facing = task.Facing;
-        this.appearance.Prepare(task.Identity, task.OperationId, AppearanceActionKinds.Forage, null, facing);
         this.inventories.RequestTransfer(
             task.Identity,
             () => this.SettleLocked(task, facing),
@@ -166,6 +165,7 @@ internal sealed class ForageCoordinator
         if (!cost.IsSuccess)
             return InventoryActionResult.Failure(cost.Result.Code, cost.Result.Message);
 
+        this.appearance.Prepare(task.Identity, task.OperationId, AppearanceActionKinds.Forage, null, facing);
         IReadOnlyList<Item> outputs;
         Exception? settlementError = null;
         using (OwnerContextLease context = OwnerContextLease.Project(task.Owner, body.Position, facing))

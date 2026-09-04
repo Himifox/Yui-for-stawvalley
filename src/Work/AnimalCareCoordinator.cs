@@ -238,10 +238,9 @@ internal sealed class AnimalCareCoordinator
             return;
 
         int facing = this.bodies.TryGetBody(task.Identity, out NPC visualBody) ? visualBody.FacingDirection : 2;
-        string visualKind = task.Action switch { CareAction.Milk => AppearanceActionKinds.Milking, CareAction.Shear => AppearanceActionKinds.Shearing, _ => AppearanceActionKinds.Petting };
-        this.appearance.Prepare(task.Identity, task.OperationId, visualKind, task.Tool, facing);
         if (task.Action == CareAction.Pet)
         {
+            this.appearance.Prepare(task.Identity, task.OperationId, AppearanceActionKinds.Petting, task.Tool, facing);
             CareCommandResult result = this.SettlePet(task, facing);
             if (result.IsSuccess)
                 this.appearance.Commit(task.Identity, task.OperationId);
@@ -333,6 +332,8 @@ internal sealed class AnimalCareCoordinator
         if (!cost.IsSuccess)
             return InventoryActionResult.Failure(cost.Result.Code, cost.Result.Message);
 
+        string visualKind = task.Action == CareAction.Milk ? AppearanceActionKinds.Milking : AppearanceActionKinds.Shearing;
+        this.appearance.Prepare(task.Identity, task.OperationId, visualKind, task.Tool, facing);
         IReadOnlyList<Item> outputs;
         Exception? settlementError = null;
         using (OwnerContextLease context = OwnerContextLease.Project(task.Owner, body.Position, facing, task.Location))

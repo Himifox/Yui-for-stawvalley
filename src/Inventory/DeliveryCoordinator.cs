@@ -189,7 +189,7 @@ internal sealed class DeliveryCoordinator
         {
             this.bodies.Halt(task.Session.Identity);
             body.faceDirection(FacingToward(body.Tile, task.Recipient.Tile));
-            this.Settle(task, body.FacingDirection, tick);
+            this.Settle(task, tick);
             return;
         }
 
@@ -221,7 +221,7 @@ internal sealed class DeliveryCoordinator
         this.navigation.MarkPathIssued(task.Navigation, body.Position, tick, RepathDelayTicks);
     }
 
-    private void Settle(DeliveryTask task, int facing, ulong tick)
+    private void Settle(DeliveryTask task, ulong tick)
     {
         if (!task.Session.TryEnterSettlement())
             return;
@@ -234,7 +234,6 @@ internal sealed class DeliveryCoordinator
             return;
         }
         task.Delivery.Phase = DeliveryPhases.Offering;
-        this.appearance.Prepare(task.Session.Identity, task.Session.OperationId, AppearanceActionKinds.Handoff, cargo, facing);
         this.inventories.RequestTransfer(task.Session.Identity, () => this.SettleLocked(task), result =>
         {
             if (!this.tasks.TryGetValue(task.Session.Identity, out DeliveryTask? current) || !ReferenceEquals(current, task))
@@ -258,9 +257,18 @@ internal sealed class DeliveryCoordinator
             || !ReferenceEquals(body.currentLocation, task.Recipient.currentLocation)
             || ManhattanDistance(body.TilePoint, task.Recipient.TilePoint) > OfferDistance)
             return InventoryActionResult.Failure("DELIVERY-CONTEXT-CHANGED", "Handoff context changed while the bag lock was pending; cargo remains in Escrow.");
-        return this.registry.TryGet(task.Session.Identity, out CompanionRecord record)
-            ? this.inventories.CompleteDeliveryLocked(record, task.Delivery.DeliveryId, task.Recipient)
-            : InventoryActionResult.Failure("IDENTITY-NOT-FOUND", "The delivery owner disappeared while the bag lock was pending.");
+        if (!this.registry.TryGet(task.Session.Identity, out CompanionRecord record))
+            return InventoryActionResult.Failure("IDENTITY-NOT-FOUND", "The delivery owner disappeared while the bag lock was pending.");
+        Item? cargo = this.inventories.GetEscrow(task.Session.Identity).OfType<Item>().FirstOrDefault(item =>
+            item.modData.TryGetValue(CompanionInventoryStore.DeliveryCargoTag, out string? deliveryId)
+            && string.Equals(deliveryId, task.Delivery.DeliveryId, StringComparison.Ordinal));
+        if (cargo is null)
+            return InventoryActionResult.Failure("DELIVERY-CARGO-MISSING", "The delivery record lost its exact Escrow cargo while the bag lock was pending.");
+
+        int facing = FacingToward(body.Tile, task.Recipient.Tile);
+        body.faceDirection(facing);
+        this.appearance.Prepare(task.Session.Identity, task.Session.OperationId, AppearanceActionKinds.Handoff, cargo, facing);
+        return this.inventories.CompleteDeliveryLocked(record, task.Delivery.DeliveryId, task.Recipient);
     }
 
     private void Fail(DeliveryTask task, string code, string message, ulong tick)

@@ -204,8 +204,6 @@ internal sealed class HarvestCoordinator
             return;
 
         int facing = task.Facing;
-        string visualKind = task.Method == HarvestMethod.Scythe ? AppearanceActionKinds.HarvestScythe : AppearanceActionKinds.HarvestGrab;
-        this.appearance.Prepare(task.Identity, task.OperationId, visualKind, task.Scythe, facing);
         this.inventories.RequestTransfer(
             task.Identity,
             () => this.SettleLocked(task, facing),
@@ -235,6 +233,8 @@ internal sealed class HarvestCoordinator
         if (!cost.IsSuccess)
             return InventoryActionResult.Failure(cost.Result.Code, cost.Result.Message);
 
+        string visualKind = task.Method == HarvestMethod.Scythe ? AppearanceActionKinds.HarvestScythe : AppearanceActionKinds.HarvestGrab;
+        this.appearance.Prepare(task.Identity, task.OperationId, visualKind, task.Scythe, facing);
         Farmer engineRecipient = Game1.player;
         IReadOnlyList<Item> outputs;
         bool removeCrop = false;
