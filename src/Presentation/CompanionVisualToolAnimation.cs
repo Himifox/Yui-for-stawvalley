@@ -1,3 +1,6 @@
+using StardewValley;
+using StardewValley.Tools;
+
 namespace YuiToIssho;
 
 internal readonly record struct VisualToolAnimation(int AnimationIndex, int FrameCount);
@@ -28,6 +31,45 @@ internal static class CompanionVisualToolAnimation
         };
         animation = new VisualToolAnimation(index, frameCount);
         return true;
+    }
+
+    public static bool UsesSecondaryArm(string kind, int facing, int frame) => kind switch
+    {
+        AppearanceActionKinds.HarvestScythe or AppearanceActionKinds.Mowing
+            or AppearanceActionKinds.CombatSword or AppearanceActionKinds.CombatClub => true,
+        AppearanceActionKinds.CombatDagger => facing is 0 or 2,
+        AppearanceActionKinds.Watering => frame is 45 or 46,
+        _ => false,
+    };
+
+    public static void Draw(Farmer farmer, Tool tool, VisualToolAnimation animation, int elapsedTicks, int totalTicks)
+    {
+        int motionFrame = Math.Min(
+            animation.FrameCount - 1,
+            Math.Max(0, elapsedTicks) * animation.FrameCount / Math.Max(1, totalTicks));
+        int originalInitialIndex = tool.InitialParentTileIndex;
+        int originalCurrentIndex = tool.CurrentParentTileIndex;
+        try
+        {
+            farmer.FarmerSprite.currentSingleAnimation = animation.AnimationIndex;
+            farmer.FarmerSprite.currentAnimationIndex = motionFrame;
+            if (tool is not MeleeWeapon)
+            {
+                tool.Update(farmer.FacingDirection, motionFrame, farmer);
+                if (tool is not WateringCan)
+                {
+                    int intendedIndex = tool.CurrentParentTileIndex;
+                    tool.Update(farmer.FacingDirection, 0, farmer);
+                    tool.InitialParentTileIndex += intendedIndex - tool.CurrentParentTileIndex;
+                }
+            }
+            Game1.drawTool(farmer);
+        }
+        finally
+        {
+            tool.InitialParentTileIndex = originalInitialIndex;
+            tool.CurrentParentTileIndex = originalCurrentIndex;
+        }
     }
 
     private static int Facing(int facing, int up, int right, int down, int left) => facing switch

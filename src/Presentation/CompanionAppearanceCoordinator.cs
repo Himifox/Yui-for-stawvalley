@@ -219,7 +219,8 @@ internal sealed class CompanionAppearanceCoordinator
             if (idle)
                 screen.Y += IdleBreathingOffset(record.Identity, this.lastUpdateTick);
             float depth = visual.Farmer.getDrawLayer();
-            visual.Farmer.FarmerSprite.setCurrentSingleFrame(frame, 32000, secondaryArm: false, flip);
+            bool secondaryArm = pulse is not null && CompanionVisualToolAnimation.UsesSecondaryArm(pulse.Kind, pulse.Facing, frame);
+            visual.Farmer.FarmerSprite.setCurrentSingleFrame(frame, 32000, secondaryArm, flip);
             Vector2 origin = new(
                 visual.Farmer.xOffset,
                 (visual.Farmer.yOffset + 128f - visual.Farmer.GetBoundingBox().Height / 2f) / 4f + 4f
@@ -389,9 +390,7 @@ internal sealed class CompanionAppearanceCoordinator
         {
             visual.Farmer.CurrentTool = visual.VisualTool;
             visual.Farmer.UsingTool = true;
-            visual.Farmer.FarmerSprite.currentSingleAnimation = animation.AnimationIndex;
-            visual.Farmer.FarmerSprite.currentAnimationIndex = Math.Min(animation.FrameCount - 1, elapsed * animation.FrameCount / Math.Max(1, pulse.TotalTicks));
-            Game1.drawTool(visual.Farmer);
+            CompanionVisualToolAnimation.Draw(visual.Farmer, visual.VisualTool, animation, elapsed, pulse.TotalTicks);
             return true;
         }
         finally

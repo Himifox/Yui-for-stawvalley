@@ -402,7 +402,9 @@ internal sealed class CompanionProjectionCoordinator
                 screen.Y += IdleBreathingOffset(state.Identity);
             float depth = visual.Farmer.getDrawLayer();
             bool flip = facing == 3;
-            visual.Farmer.FarmerSprite.setCurrentSingleFrame(frame, 32000, secondaryArm: false, flip);
+            bool secondaryArm = projection.Presentation is CompanionPresentationDto action
+                && CompanionVisualToolAnimation.UsesSecondaryArm(action.Kind, action.Facing, frame);
+            visual.Farmer.FarmerSprite.setCurrentSingleFrame(frame, 32000, secondaryArm, flip);
             Vector2 origin = new(
                 visual.Farmer.xOffset,
                 (visual.Farmer.yOffset + 128f - visual.Farmer.GetBoundingBox().Height / 2f) / 4f + 4f
@@ -747,9 +749,7 @@ internal sealed class CompanionProjectionCoordinator
         {
             visual.Farmer.CurrentTool = tool;
             visual.Farmer.UsingTool = true;
-            visual.Farmer.FarmerSprite.currentSingleAnimation = animation.AnimationIndex;
-            visual.Farmer.FarmerSprite.currentAnimationIndex = Math.Min(animation.FrameCount - 1, elapsed * animation.FrameCount / Math.Max(1, totalTicks));
-            Game1.drawTool(visual.Farmer);
+            CompanionVisualToolAnimation.Draw(visual.Farmer, tool, animation, elapsed, totalTicks);
             return true;
         }
         finally
