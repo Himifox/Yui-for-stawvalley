@@ -15,7 +15,6 @@ internal sealed class CompanionBondCoordinator
 {
     private const int TalkPoints = 20;
     private const int AffectionPoints = 10;
-    private const int GiftPoints = 50;
     private readonly CompanionRegistry registry;
     private readonly CompanionBodyBinder bodies;
     private readonly CompanionInventoryStore inventories;
@@ -104,6 +103,9 @@ internal sealed class CompanionBondCoordinator
             return;
         }
 
+        CompanionGiftPreference preference = new(CompanionGiftTaste.Neutral, 15, "GIFT-NEUTRAL");
+        string giftName = expectedItemId;
+
         this.inventories.RequestTransfer(
             identity,
             transfer: () =>
@@ -115,6 +117,11 @@ internal sealed class CompanionBondCoordinator
                 RefreshGiftWeek(current.Bond);
                 if (current.Bond.LastGiftDay == Today || current.Bond.GiftsThisWeek >= 2)
                     return InventoryActionResult.Failure("GIFT-LIMIT-CHANGED", "Yui's gift limit changed before the transfer completed.");
+                int index = playerSlot - 1;
+                if (index < 0 || index >= owner.Items.Count || owner.Items[index] is not StardewValley.Object offered || offered.QualifiedItemId != expectedItemId)
+                    return InventoryActionResult.Failure("GIFT-ITEM-CHANGED", "The exact offered gift changed before Yui's bag lock was acquired.");
+                preference = CompanionGiftPreferences.Evaluate(offered);
+                giftName = offered.DisplayName;
                 return this.inventories.TryGiftOne(identity, owner, playerSlot, expectedItemId);
             },
             completed: result =>
@@ -133,7 +140,7 @@ internal sealed class CompanionBondCoordinator
                 RefreshGiftWeek(current.Bond);
                 current.Bond.LastGiftDay = Today;
                 current.Bond.GiftsThisWeek++;
-                AddPoints(current.Bond, GiftPoints);
+                AddPoints(current.Bond, preference.BondPoints);
                 if (this.bodies.TryGetBody(identity, out NPC body))
                 {
                     int facing = FacingToward(body.TilePoint, owner.TilePoint);
@@ -141,7 +148,7 @@ internal sealed class CompanionBondCoordinator
                     this.appearance.SetPhase(identity, $"gift:{Today}:{current.Bond.GiftsThisWeek}", AppearanceActionKinds.Handoff, "Commit", null, facing, 36);
                     Celebrate(body);
                 }
-                completed(BondActionResult.Success("GIFT-ACCEPTED", $"{result.Message} Bond +{GiftPoints}."));
+                completed(BondActionResult.Success(preference.Code, preference.Describe(giftName)));
             });
     }
 

@@ -125,7 +125,14 @@ internal sealed class CompanionSpeechCoordinator
             "sit" => "speech.command.sit",
             "stand" => "speech.command.stand",
             "hug" => "speech.command.hug",
-            "gift" => "speech.command.gift",
+            "gift" => observation.Result.Code switch
+            {
+                "GIFT-LOVED" => "speech.gift.loved",
+                "GIFT-LIKED" => "speech.gift.liked",
+                "GIFT-DISLIKED" => "speech.gift.disliked",
+                "GIFT-HATED" => "speech.gift.hated",
+                _ => "speech.gift.neutral",
+            },
             "stop" => "speech.command.stop",
             "work-start" => "speech.command.work-start",
             "work-stop" => "speech.command.work-stop",
