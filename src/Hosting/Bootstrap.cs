@@ -17,8 +17,8 @@ internal enum LifecycleState
 
 internal sealed class Bootstrap
 {
-    private const string SaveDataKey = "schema-v10";
-    private const string LegacySaveDataKey = "schema-v9";
+    private const string SaveDataKey = "schema-v11";
+    private static readonly string[] LegacySaveDataKeys = { "schema-v10", "schema-v9" };
 
     private readonly IModHelper helper;
     private readonly IMonitor monitor;
@@ -307,8 +307,14 @@ internal sealed class Bootstrap
             bool loadedLegacyKey = false;
             if (data is null)
             {
-                data = this.helper.Data.ReadSaveData<YuiToIsshoSaveData>(LegacySaveDataKey);
-                loadedLegacyKey = data is not null;
+                foreach (string legacyKey in LegacySaveDataKeys)
+                {
+                    data = this.helper.Data.ReadSaveData<YuiToIsshoSaveData>(legacyKey);
+                    if (data is null)
+                        continue;
+                    loadedLegacyKey = true;
+                    break;
+                }
             }
             data ??= new YuiToIsshoSaveData();
             SaveMigrationResult migration = SaveDataMigrator.Migrate(data);

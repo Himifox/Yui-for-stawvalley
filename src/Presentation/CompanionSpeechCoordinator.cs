@@ -251,6 +251,7 @@ internal sealed class CompanionSpeechCoordinator
         if (Context.IsMainPlayer)
         {
             this.ObserveVitalChanges();
+            this.ObserveDailyMoments();
             this.ObserveAmbientSpeech();
         }
         foreach ((CompanionIdentity identity, SpeechRuntime runtime) in this.runtimes.ToArray())
@@ -482,6 +483,57 @@ internal sealed class CompanionSpeechCoordinator
         }
     }
 
+    private void ObserveDailyMoments()
+    {
+        int day = CurrentDay;
+        foreach (CompanionRecord record in this.registry.Active)
+        {
+            SpeechRuntime runtime = this.GetRuntime(record.Identity);
+            Farmer? owner = Game1.GetPlayer(record.OwnerId, onlyOnline: true);
+            if (!record.WantsBody
+                || !OwnerLifecycleGate.CanAdvance(owner)
+                || runtime.Current is not null
+                || runtime.Pending is not null
+                || owner is null
+                || !this.bodies.TryGetBodyGeneration(record.Identity, out ulong generation)
+                || !this.TryGetBoundBody(record.Identity, generation, out NPC body)
+                || !ReferenceEquals(owner.currentLocation, body.currentLocation))
+                continue;
+
+            string location = owner.currentLocation.NameOrUniqueName;
+            bool home = IsHome(location);
+            bool arrivedHome = runtime.LastOwnerLocation.Length > 0 && !IsHome(runtime.LastOwnerLocation) && home;
+            int distance = Math.Max(Math.Abs(owner.TilePoint.X - body.TilePoint.X), Math.Abs(owner.TilePoint.Y - body.TilePoint.Y));
+            CompanionBondRecord bond = record.Bond;
+            if (bond.LastWakeDay != day && Game1.timeOfDay < 1000 && distance <= 8)
+            {
+                bond.LastWakeDay = day;
+                this.Offer(record.Identity, "speech.moment.wake", "moment.wake", SpeechPriorities.Important, CommandCooldownTicks, $"wake:{day}");
+            }
+            else if (bond.LastBedtimeDay != day && Game1.timeOfDay >= 2200 && home && distance <= 8)
+            {
+                bond.LastBedtimeDay = day;
+                this.Offer(record.Identity, "speech.moment.bedtime", "moment.bedtime", SpeechPriorities.Important, CommandCooldownTicks, $"bedtime:{day}");
+            }
+            else if (bond.LastHomecomingDay != day && arrivedHome)
+            {
+                bond.LastHomecomingDay = day;
+                this.Offer(record.Identity, "speech.moment.homecoming", "moment.homecoming", SpeechPriorities.Important, CommandCooldownTicks, $"homecoming:{day}");
+            }
+            else if (bond.LastRainReactionDay != day && Game1.isRaining && body.currentLocation.IsOutdoors && distance <= 8)
+            {
+                bond.LastRainReactionDay = day;
+                this.Offer(record.Identity, "speech.moment.rain", "moment.rain", SpeechPriorities.Normal, AmbientTopicCooldownTicks, $"rain:{day}");
+            }
+            else if (bond.LastGreetingDay != day && distance <= 4)
+            {
+                bond.LastGreetingDay = day;
+                this.Offer(record.Identity, "speech.moment.greeting", "moment.greeting", SpeechPriorities.Important, CommandCooldownTicks, $"greeting:{day}");
+            }
+            runtime.LastOwnerLocation = location;
+        }
+    }
+
     private void EnsureClientEpoch()
     {
         string epoch = this.multiplayer.SessionEpoch;
@@ -659,6 +711,12 @@ internal sealed class CompanionSpeechCoordinator
         return "speech.talk.location.away";
     }
 
+    private static int CurrentDay => (int)Math.Min((uint)int.MaxValue, Game1.stats.DaysPlayed);
+
+    private static bool IsHome(string location) =>
+        location.Contains("FarmHouse", StringComparison.OrdinalIgnoreCase)
+        || location.Contains("Cabin", StringComparison.OrdinalIgnoreCase);
+
     private static string BoundText(string value)
     {
         char[] clean = value.Where(character => !char.IsControl(character)).Take(SpeechEventContracts.MaximumTextCharacters).ToArray();
@@ -739,6 +797,7 @@ internal sealed class CompanionSpeechCoordinator
         public ulong NextAmbientTick { get; set; }
         public string LastVitalState { get; set; } = string.Empty;
         public string LastFatigueLevel { get; set; } = string.Empty;
+        public string LastOwnerLocation { get; set; } = string.Empty;
         public SpeechCandidate? Pending { get; set; }
         public ActiveSpeech? Current { get; set; }
         public Dictionary<string, ulong> TopicCooldowns { get; } = new(StringComparer.Ordinal);

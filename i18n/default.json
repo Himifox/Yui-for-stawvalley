@@ -81,5 +81,10 @@
   "speech.ambient.evening": "It's getting dark. Don't push yourself too hard.||You did a lot today. Good work.||The night is getting chilly. Let's head back soon.",
   "speech.ambient.follow": "I'm right here beside you.||You don't need to hurry. I'll keep up.||The road doesn't feel as long when we walk together.",
   "speech.ambient.wait": "I'll wait for you.||Don't worry about me. Take your time.||It's peaceful here. I don't mind waiting.",
-  "speech.ambient.idle": "It's okay to do nothing once in a while.||Where should we wander today?||I feel at ease when you're nearby."
+  "speech.ambient.idle": "It's okay to do nothing once in a while.||Where should we wander today?||I feel at ease when you're nearby.",
+  "speech.moment.wake": "Good morning. I was waiting for you to wake up.||You're awake! Let's start the day together.||Morning. Did you sleep well?",
+  "speech.moment.greeting": "There you are. I'm glad I found you today.||Hi. Seeing you makes the day feel properly started.||I was hoping we'd get a moment together today.",
+  "speech.moment.rain": "It's raining. Come closer so we don't lose each other in the sound.||The rain is lovely, but let's keep each other warm.||A rainy day together can still be a good day.",
+  "speech.moment.homecoming": "Welcome home. You did well today.||We're home. You can relax now.||There you are—home safe with me.",
+  "speech.moment.bedtime": "It's late. Let's go to sleep and leave tomorrow for tomorrow.||You've done enough for one day. I'll stay nearby while you rest.||Good night. I'll be here when morning comes."
 }
