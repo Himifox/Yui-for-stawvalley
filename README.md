@@ -65,10 +65,12 @@ Yui 的默认行为强调“一起做”。仅仅拿着工具不会触发工作�
 在 Git Bash 中运行：
 
 ```bash
+node scripts/validate-release.mjs
 dotnet build YuiToIssho.csproj -c Release -p:EnableModDeploy=false
+node scripts/validate-release.mjs --artifact
 ```
 
-生成的模组压缩包位于 `bin/Release/net6.0/`。`EnableModDeploy` 默认关闭，因此构建不会自动修改游戏的 `Mods` 目录。
+第一条命令会检查项目、manifest、README、存档 schema、联机协议与翻译键是否一致。生成的模组压缩包位于 `bin/Release/net6.0/`；最后一条命令同时确认对应版本的压缩包确实存在。`EnableModDeploy` 默认关闭，因此构建不会自动修改游戏的 `Mods` 目录。
 
 ## 常用命令
 
