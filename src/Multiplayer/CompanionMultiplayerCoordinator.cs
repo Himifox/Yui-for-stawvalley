@@ -18,11 +18,13 @@ internal sealed class CompanionMultiplayerCoordinator
     private const int PendingRequestCapacity = 32;
     private const int RequestRetryTicks = 60;
     private const int MaximumSendAttempts = 3;
+    private const int DeferredReceiptTimeoutTicks = 600;
     private readonly IModHelper helper;
     private readonly IMonitor monitor;
     private readonly CompanionProjectionCoordinator projection;
     private readonly CompanionBodyBinder bodies;
     private readonly Dictionary<RequestCacheKey, CommandReceiptDto> receiptCache = new();
+    private readonly Dictionary<RequestCacheKey, NetworkCommandResult> earlyDeferredCompletions = new();
     private readonly Queue<RequestCacheKey> receiptOrder = new();
     private readonly Dictionary<long, ulong> lastAcceptedSequence = new();
     private readonly Dictionary<CompanionIdentity, CompanionPresentationDto> lastPresentations = new();
@@ -214,7 +216,7 @@ internal sealed class CompanionMultiplayerCoordinator
         if (Context.IsMainPlayer)
         {
             CommandReceiptDto receipt = this.Settle(validation.Request);
-            return new NetworkCommandResult(receipt.IsSuccess, receipt.Code, receipt.Message, receipt.Planting, receipt.Combat, dto.RequestId);
+            return new NetworkCommandResult(receipt.IsSuccess, receipt.Code, receipt.Message, receipt.Planting, receipt.Combat, dto.RequestId, receipt.IsFinal);
         }
 
         if (this.pendingOutbound.Count >= PendingRequestCapacity)
@@ -222,6 +224,33 @@ internal sealed class CompanionMultiplayerCoordinator
         this.pendingOutbound.Add(dto.RequestId, new PendingOutboundRequest(dto, this.currentTick));
         this.SendCommand(dto);
         return new NetworkCommandResult(true, "REQUEST-SENT", $"Sent request {dto.RequestId} to the host for {identity}.", RequestId: dto.RequestId);
+    }
+
+    public void CompleteDeferred(ValidatedCommandRequest request, NetworkCommandResult result)
+    {
+        if (!Context.IsMainPlayer
+            || !this.IsSessionReady
+            || request.SessionEpoch != this.sessionEpoch
+            || !result.IsFinal)
+            return;
+
+        RequestCacheKey key = new(request.SenderPlayerId, request.RequestId);
+        if (!this.receiptCache.TryGetValue(key, out CommandReceiptDto? pending))
+        {
+            this.earlyDeferredCompletions[key] = result;
+            return;
+        }
+        if (pending.IsFinal)
+            return;
+
+        CommandReceiptDto receipt = this.CreateReceipt(request, result);
+        this.receiptCache[key] = receipt;
+        this.ObserveSettlement(request, result, receipt.SnapshotVersion);
+        if (request.SenderPlayerId != Game1.player.UniqueMultiplayerID)
+            this.SendReceipt(request.SenderPlayerId, receipt);
+        else
+            this.receiptObserver?.Invoke(new CommandReceiptObservation(request.RequestId, request.Identity, request.Command, request.Fields, result, receipt.SnapshotVersion));
+        this.monitor.Log($"HY-NET-DEFERRED-{MultiplayerDtoCodec.Bounded(result.Code, 64)}: {MultiplayerDtoCodec.Bounded(result.Message, 256)}", result.IsSuccess ? LogLevel.Info : LogLevel.Warn);
     }
 
     public void RequestSnapshot()
@@ -292,27 +321,34 @@ internal sealed class CompanionMultiplayerCoordinator
         if (dto.ProtocolVersion != MultiplayerProtocol.Version
             || dto.SessionEpoch != this.sessionEpoch
             || dto.SenderPlayerId != Game1.player.UniqueMultiplayerID
-            || !Guid.TryParseExact(dto.RequestId, "N", out _))
+            || !Guid.TryParseExact(dto.RequestId, "N", out _)
+            || (!dto.IsFinal && (!dto.IsSuccess || dto.Code != "REQUEST-PENDING"))
+            || (dto.IsFinal && dto.Code == "REQUEST-PENDING"))
             return;
         if (this.pendingOutbound.TryGetValue(dto.RequestId, out PendingOutboundRequest? pending)
             && pending.Dto.Sequence == dto.Sequence
             && pending.Dto.OwnerId == dto.OwnerId
             && pending.Dto.Slot == dto.Slot)
         {
-            this.pendingOutbound.Remove(dto.RequestId);
-            this.receiptObserver?.Invoke(new CommandReceiptObservation(
-                dto.RequestId,
-                new CompanionIdentity(pending.Dto.OwnerId, pending.Dto.Slot),
-                pending.Dto.Command,
-                pending.Dto.Fields,
-                new NetworkCommandResult(dto.IsSuccess, dto.Code, dto.Message, dto.Planting, dto.Combat, dto.RequestId),
-                dto.SnapshotVersion));
-            if (pending.Dto.Command == "operation-status"
-                && pending.Dto.Fields.TryGetValue("operationId", out string? operationId)
-                && IsDefinitiveOperationStatus(dto.Code))
-                this.unknownOperations.Remove(operationId);
+            pending.LastSentTick = this.currentTick;
+            pending.IsDeferred = !dto.IsFinal;
+            if (dto.IsFinal)
+            {
+                this.pendingOutbound.Remove(dto.RequestId);
+                this.receiptObserver?.Invoke(new CommandReceiptObservation(
+                    dto.RequestId,
+                    new CompanionIdentity(pending.Dto.OwnerId, pending.Dto.Slot),
+                    pending.Dto.Command,
+                    pending.Dto.Fields,
+                    new NetworkCommandResult(dto.IsSuccess, dto.Code, dto.Message, dto.Planting, dto.Combat, dto.RequestId),
+                    dto.SnapshotVersion));
+                if (pending.Dto.Command == "operation-status"
+                    && pending.Dto.Fields.TryGetValue("operationId", out string? operationId)
+                    && IsDefinitiveOperationStatus(dto.Code))
+                    this.unknownOperations.Remove(operationId);
+            }
         }
-        this.monitor.Log($"HY-NET-{MultiplayerDtoCodec.Bounded(dto.Code, 64)}: {MultiplayerDtoCodec.Bounded(dto.Message, 256)}", dto.IsSuccess ? LogLevel.Info : LogLevel.Warn);
+        this.monitor.Log($"HY-NET-{MultiplayerDtoCodec.Bounded(dto.Code, 64)}: {MultiplayerDtoCodec.Bounded(dto.Message, 256)}", dto.IsFinal ? (dto.IsSuccess ? LogLevel.Info : LogLevel.Warn) : LogLevel.Trace);
     }
 
     private void ReceiveSnapshotRequest(ModMessageReceivedEventArgs e)
@@ -439,24 +475,36 @@ internal sealed class CompanionMultiplayerCoordinator
         {
             this.lastAcceptedSequence[request.SenderPlayerId] = request.Sequence;
             result = this.commandHandler?.Invoke(request) ?? NetworkCommandResult.Failure("COMMAND-NOT-ROUTED", "The host command route is not active yet.");
+            if (!result.IsFinal && this.earlyDeferredCompletions.Remove(key, out NetworkCommandResult completed))
+                result = completed;
         }
 
-        var receipt = new CommandReceiptDto
-        {
-            SessionEpoch = this.sessionEpoch,
-            RequestId = request.RequestId,
-            OwnerId = request.Identity.OwnerId,
-            Slot = request.Identity.Slot,
-            SenderPlayerId = request.SenderPlayerId,
-            Sequence = request.Sequence,
-            IsSuccess = result.IsSuccess,
-            Code = MultiplayerDtoCodec.Bounded(result.Code, 64),
-            Message = MultiplayerDtoCodec.Bounded(result.Message, 256),
-            SnapshotVersion = this.snapshotVersion,
-            Planting = result.Planting,
-            Combat = result.Combat,
-        };
+        CommandReceiptDto receipt = this.CreateReceipt(request, result);
         this.CacheReceipt(key, receipt);
+        if (receipt.IsFinal)
+            this.ObserveSettlement(request, result, receipt.SnapshotVersion);
+        return receipt;
+    }
+
+    private CommandReceiptDto CreateReceipt(ValidatedCommandRequest request, NetworkCommandResult result) => new()
+    {
+        SessionEpoch = this.sessionEpoch,
+        RequestId = request.RequestId,
+        OwnerId = request.Identity.OwnerId,
+        Slot = request.Identity.Slot,
+        SenderPlayerId = request.SenderPlayerId,
+        Sequence = request.Sequence,
+        IsSuccess = result.IsSuccess,
+        IsFinal = result.IsFinal,
+        Code = MultiplayerDtoCodec.Bounded(result.Code, 64),
+        Message = MultiplayerDtoCodec.Bounded(result.Message, 256),
+        SnapshotVersion = this.snapshotVersion,
+        Planting = result.Planting,
+        Combat = result.Combat,
+    };
+
+    private void ObserveSettlement(ValidatedCommandRequest request, NetworkCommandResult result, ulong settledSnapshotVersion)
+    {
         try
         {
             this.settlementObserver?.Invoke(new CommandReceiptObservation(
@@ -465,13 +513,12 @@ internal sealed class CompanionMultiplayerCoordinator
                 request.Command,
                 request.Fields,
                 result,
-                receipt.SnapshotVersion));
+                settledSnapshotVersion));
         }
         catch (Exception ex)
         {
             this.monitor.Log($"HY-NET-SETTLEMENT-OBSERVER-FAILED: {request.Identity} {ex.GetType().Name}.", LogLevel.Warn);
         }
-        return receipt;
     }
 
     private void SendReceipt(long recipient, CommandRequestDto? request, NetworkCommandResult result)
@@ -485,6 +532,7 @@ internal sealed class CompanionMultiplayerCoordinator
             SenderPlayerId = recipient,
             Sequence = request?.Sequence ?? 0,
             IsSuccess = result.IsSuccess,
+            IsFinal = result.IsFinal,
             Code = MultiplayerDtoCodec.Bounded(result.Code, 64),
             Message = MultiplayerDtoCodec.Bounded(result.Message, 256),
             SnapshotVersion = this.snapshotVersion,
@@ -511,6 +559,7 @@ internal sealed class CompanionMultiplayerCoordinator
     private void ClearRequestState(bool clearUnknownOperations = true)
     {
         this.receiptCache.Clear();
+        this.earlyDeferredCompletions.Clear();
         this.receiptOrder.Clear();
         this.lastAcceptedSequence.Clear();
         this.pendingOutbound.Clear();
@@ -527,6 +576,18 @@ internal sealed class CompanionMultiplayerCoordinator
         {
             if (tick - pending.LastSentTick < RequestRetryTicks)
                 continue;
+            if (pending.IsDeferred)
+            {
+                if (tick - pending.FirstSentTick >= DeferredReceiptTimeoutTicks)
+                {
+                    this.pendingOutbound.Remove(pending.Dto.RequestId);
+                    this.monitor.Log($"HY-NET-DEFERRED-TIMEOUT: Host did not finish deferred request {pending.Dto.RequestId} within the bounded wait.", LogLevel.Warn);
+                    continue;
+                }
+                pending.LastSentTick = tick;
+                this.SendCommand(pending.Dto);
+                continue;
+            }
             if (pending.Attempts >= MaximumSendAttempts)
             {
                 this.pendingOutbound.Remove(pending.Dto.RequestId);
@@ -711,7 +772,7 @@ internal sealed class CompanionMultiplayerCoordinator
     {
         if (!IsRecoverableOperation(dto.Command))
             return;
-        string operationId = dto.Fields.TryGetValue("operationId", out string? supplied) ? supplied : $"r10-{dto.RequestId}";
+        string operationId = dto.Fields.TryGetValue("operationId", out string? supplied) ? supplied : $"r11-{dto.RequestId}";
         if (operationId.Length is > 0 and <= 128)
             this.unknownOperations[operationId] = new UnknownOutboundOperation(new CompanionIdentity(dto.OwnerId, dto.Slot), operationId, dto.Command);
     }
@@ -742,10 +803,12 @@ internal sealed class CompanionMultiplayerCoordinator
 
     private sealed class PendingOutboundRequest
     {
-        public PendingOutboundRequest(CommandRequestDto dto, ulong sentTick) { this.Dto = dto; this.LastSentTick = sentTick; }
+        public PendingOutboundRequest(CommandRequestDto dto, ulong sentTick) { this.Dto = dto; this.FirstSentTick = sentTick; this.LastSentTick = sentTick; }
         public CommandRequestDto Dto { get; }
+        public ulong FirstSentTick { get; }
         public ulong LastSentTick { get; set; }
         public int Attempts { get; set; } = 1;
+        public bool IsDeferred { get; set; }
     }
 
     private sealed record UnknownOutboundOperation(CompanionIdentity Identity, string OperationId, string Command);

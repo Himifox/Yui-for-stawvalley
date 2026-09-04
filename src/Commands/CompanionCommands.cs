@@ -359,7 +359,10 @@ internal sealed class CompanionCommands
                 case "stand": this.LogLeisure(this.leisure.Stand(request.Identity, "PLAYER-STOOD", suppressAutomaticJoin: true)); break;
                 case "talk": this.LogBond(this.bond.Talk(request.Identity, owner)); break;
                 case "hug": this.LogBond(this.bond.Hug(request.Identity, owner)); break;
-                case "gift": this.bond.Gift(request.Identity, owner, int.Parse(request.Fields["playerSlot"]), request.Fields["itemId"], this.LogBond); break;
+                case "gift":
+                    this.BeginDeferred(request, "Yui is waiting for the bag lock before accepting the gift.");
+                    this.bond.Gift(request.Identity, owner, int.Parse(request.Fields["playerSlot"]), request.Fields["itemId"], result => this.CompleteDeferred(request, result.IsSuccess, result.Code, result.Message));
+                    break;
                 case "stop": this.SetMode(request.Identity, CompanionModes.Wait, "STOPPED"); break;
                 case "assist-start": this.AssistStart(request.Identity, owner); break;
                 case "assist-status": this.LogAssist(this.assist.Status(request.Identity)); break;
@@ -370,15 +373,15 @@ internal sealed class CompanionCommands
                 case "work-stop": this.WorkStop(request.Identity, "PLAYER-STOPPED"); break;
                 case "cursor-single": this.CursorSingle(request, owner); break;
                 case "bag-give":
-                case "bag-take": this.Bag(request.Identity, coordinatorArgs, owner); break;
+                case "bag-take": this.Bag(request.Identity, coordinatorArgs, owner, request); break;
                 case "storage-authorize":
                 case "storage-unauthorize":
                 case "storage-borrow":
                 case "storage-take-material":
-                case "storage-return": this.Storage(request.Identity, coordinatorArgs, owner); break;
+                case "storage-return": this.Storage(request.Identity, coordinatorArgs, owner, request); break;
                 case "delivery-create":
                 case "delivery-offer":
-                case "delivery-return": this.Delivery(request.Identity, coordinatorArgs); break;
+                case "delivery-return": this.Delivery(request.Identity, coordinatorArgs, request); break;
                 case "craft-list": this.LogCraft(this.crafting.List(request.Identity, owner)); break;
                 case "craft-preview": this.LogCraft(this.crafting.Preview(request.Identity, owner, request.Fields["recipeKey"], request.Fields.TryGetValue("craftCount", out string? count) ? int.Parse(count) : 1)); break;
                 case "craft-status": this.LogCraft(this.crafting.Status(request.Identity)); break;
@@ -392,7 +395,7 @@ internal sealed class CompanionCommands
                 case "plant-resume": this.LogPlant(this.planting.Resume(request.Identity, owner)); break;
                 case "plant-cancel": this.LogPlant(this.planting.Cancel(request.Identity, owner)); break;
                 case "vitals-eat":
-                case "vitals-rest": this.Vitals(request.Identity, coordinatorArgs); break;
+                case "vitals-rest": this.Vitals(request.Identity, coordinatorArgs, request); break;
                 case "water": this.Water(request.Identity, coordinatorArgs); break;
                 case "chop": this.Chop(request.Identity, coordinatorArgs); break;
                 case "mine": this.Mine(request.Identity, coordinatorArgs); break;
@@ -511,7 +514,7 @@ internal sealed class CompanionCommands
         this.Log(result.IsSuccess, result.Code, result.Message);
     }
 
-    private void Bag(CompanionIdentity identity, string[] args, Farmer owner)
+    private void Bag(CompanionIdentity identity, string[] args, Farmer owner, ValidatedCommandRequest? request = null)
     {
         if (!this.registry.TryGet(identity, out CompanionRecord record))
         {
@@ -535,6 +538,7 @@ internal sealed class CompanionCommands
             return;
         }
 
+        this.BeginDeferred(request, "The bag transfer is waiting for Yui's inventory lock.");
         this.inventories.RequestTransfer(
             identity,
             transfer: () =>
@@ -554,11 +558,11 @@ internal sealed class CompanionCommands
                     ? this.inventories.TryGive(identity, owner, oneBasedSlot)
                     : this.inventories.TryTake(identity, owner, oneBasedSlot);
             },
-            completed: result => this.Log(result.IsSuccess, result.Code, result.Message)
+            completed: result => this.CompleteDeferred(request, result.IsSuccess, result.Code, result.Message)
         );
     }
 
-    private void Storage(CompanionIdentity identity, string[] args, Farmer owner)
+    private void Storage(CompanionIdentity identity, string[] args, Farmer owner, ValidatedCommandRequest? request = null)
     {
         string operation = args.Length >= 3 ? args[2].ToLowerInvariant() : "status";
         switch (operation)
@@ -574,7 +578,8 @@ internal sealed class CompanionCommands
                     this.Log(false, "INVALID-STORAGE-CHEST", "Usage: yui storage <authorize|unauthorize> <tileX> <tileY>.");
                     return;
                 }
-                this.storage.SetAuthorization(identity, owner, tileX, tileY, operation == "authorize", result => this.Log(result.IsSuccess, result.Code, result.Message));
+                this.BeginDeferred(request, "The Chest authorization is waiting for its mutex.");
+                this.storage.SetAuthorization(identity, owner, tileX, tileY, operation == "authorize", result => this.CompleteDeferred(request, result.IsSuccess, result.Code, result.Message));
                 return;
             case "borrow":
                 if (args.Length < 4)
@@ -608,7 +613,7 @@ internal sealed class CompanionCommands
         }
     }
 
-    private void Vitals(CompanionIdentity identity, string[] args)
+    private void Vitals(CompanionIdentity identity, string[] args, ValidatedCommandRequest? request = null)
     {
         string operation = args.Length >= 3 ? args[2].ToLowerInvariant() : "status";
         switch (operation)
@@ -628,8 +633,10 @@ internal sealed class CompanionCommands
                     }
                     slot = parsed;
                 }
-                VitalActionResult scheduled = this.vitals.RequestEat(identity, slot, result => this.Log(result.IsSuccess, result.Code, result.Message));
-                this.Log(scheduled.IsSuccess, scheduled.Code, scheduled.Message);
+                this.BeginDeferred(request, "The food transaction is waiting for Yui's bag lock.");
+                VitalActionResult scheduled = this.vitals.RequestEat(identity, slot, result => this.CompleteDeferred(request, result.IsSuccess, result.Code, result.Message));
+                if (!scheduled.IsSuccess || request is null)
+                    this.Log(scheduled.IsSuccess, scheduled.Code, scheduled.Message);
                 return;
             case "rest":
                 int seconds = 4;
@@ -882,7 +889,7 @@ internal sealed class CompanionCommands
         }
     }
 
-    private void Delivery(CompanionIdentity identity, string[] args)
+    private void Delivery(CompanionIdentity identity, string[] args, ValidatedCommandRequest? request = null)
     {
         if (!this.registry.TryGet(identity, out CompanionRecord record))
         {
@@ -899,6 +906,7 @@ internal sealed class CompanionCommands
             return;
         }
 
+        this.BeginDeferred(request, "The delivery transaction is waiting for Yui's bag lock.");
         this.inventories.RequestTransfer(
             identity,
             () =>
@@ -929,7 +937,7 @@ internal sealed class CompanionCommands
                     return this.inventories.ReturnDeliveryLocked(record, args[3]);
                 return InventoryActionResult.Failure("INVALID-DELIVERY-COMMAND", "Use delivery send <bagSlot> <count> <recipientPlayerId> <deliveryId>, offer <deliveryId>, or return <deliveryId>.");
             },
-            completed: result => this.Log(result.IsSuccess, result.Code, result.Message)
+            completed: result => this.CompleteDeferred(request, result.IsSuccess, result.Code, result.Message)
         );
     }
 
@@ -1601,7 +1609,7 @@ internal sealed class CompanionCommands
     private void PlantStart(CompanionIdentity identity, Farmer owner, ValidatedCommandRequest request)
     {
         PlantingScope scope = RadiusPlantingScope(owner, int.Parse(request.Fields["radius"]));
-        string operationId = request.Fields.GetValueOrDefault("operationId") ?? $"r10-{request.RequestId}";
+        string operationId = request.Fields.GetValueOrDefault("operationId") ?? $"r11-{request.RequestId}";
         this.LogPlant(this.planting.Start(identity, owner, request.Fields["seedOptionId"], int.Parse(request.Fields["count"]), scope, operationId));
     }
 
@@ -1979,7 +1987,7 @@ internal sealed class CompanionCommands
     {
         string slot = request.Identity.Slot.ToString();
         IReadOnlyDictionary<string, string> fields = request.Fields;
-        string operationId = fields.GetValueOrDefault("operationId") ?? $"r10-{request.RequestId}";
+        string operationId = fields.GetValueOrDefault("operationId") ?? $"r11-{request.RequestId}";
         return request.Command switch
         {
             "bag-give" => new[] { "bag", slot, "give", fields["playerSlot"] },
@@ -2088,6 +2096,20 @@ internal sealed class CompanionCommands
     private void LogLeisure(LeisureActionResult result) => this.Log(result.IsSuccess, result.Code, result.Message);
 
     private void LogBond(BondActionResult result) => this.Log(result.IsSuccess, result.Code, result.Message);
+
+    private void BeginDeferred(ValidatedCommandRequest? request, string message)
+    {
+        if (request is not null)
+            this.capturedResult = NetworkCommandResult.Pending(message);
+    }
+
+    private void CompleteDeferred(ValidatedCommandRequest? request, bool success, string code, string message)
+    {
+        if (request is ValidatedCommandRequest deferred)
+            this.multiplayer.CompleteDeferred(deferred, new NetworkCommandResult(success, code, message));
+        else
+            this.Log(success, code, message);
+    }
 
     private bool CheckVitals(CompanionIdentity identity, string kind)
     {

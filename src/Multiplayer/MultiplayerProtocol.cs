@@ -4,7 +4,7 @@ namespace YuiToIssho;
 
 internal static class MultiplayerProtocol
 {
-    public const int Version = 10;
+    public const int Version = 11;
     public const string ModId = "Himifox.YuiToIssho";
     public const int MaxRequestCharacters = 2048;
     public const int MaxFieldCount = 10;
@@ -14,12 +14,12 @@ internal static class MultiplayerProtocol
 
     public static class MessageTypes
     {
-        public const string CommandRequest = "r10.command-request.v10";
-        public const string CommandReceipt = "r10.command-receipt.v10";
-        public const string SnapshotRequest = "r10.snapshot-request.v10";
-        public const string RuntimeSnapshot = "r10.runtime-snapshot.v10";
-        public const string PresentationEvent = "r10.presentation-event.v10";
-        public const string SpeechEvent = "r10.speech-event.v10";
+        public const string CommandRequest = "r11.command-request.v11";
+        public const string CommandReceipt = "r11.command-receipt.v11";
+        public const string SnapshotRequest = "r11.snapshot-request.v11";
+        public const string RuntimeSnapshot = "r11.runtime-snapshot.v11";
+        public const string PresentationEvent = "r11.presentation-event.v11";
+        public const string SpeechEvent = "r11.speech-event.v11";
 
         public static bool IsKnown(string type) => type is CommandRequest or CommandReceipt or SnapshotRequest or RuntimeSnapshot or PresentationEvent or SpeechEvent;
     }
@@ -48,6 +48,7 @@ internal sealed class CommandReceiptDto
     public long SenderPlayerId { get; set; }
     public ulong Sequence { get; set; }
     public bool IsSuccess { get; set; }
+    public bool IsFinal { get; set; } = true;
     public string Code { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
     public ulong SnapshotVersion { get; set; }
@@ -249,10 +250,12 @@ internal readonly record struct NetworkCommandResult(
     string Message,
     PlantingCommandPayload? Planting = null,
     CombatCommandPayload? Combat = null,
-    string RequestId = "")
+    string RequestId = "",
+    bool IsFinal = true)
 {
     public static NetworkCommandResult Success(string code, string message) => new(true, code, message);
     public static NetworkCommandResult Failure(string code, string message) => new(false, code, message);
+    public static NetworkCommandResult Pending(string message) => new(true, "REQUEST-PENDING", message, IsFinal: false);
 }
 
 internal sealed class CombatCommandPayload
