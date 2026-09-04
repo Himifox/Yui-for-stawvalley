@@ -28,6 +28,8 @@ internal static class AppearanceActionKinds
     public const string Handoff = "Handoff";
     public const string Crafting = "Crafting";
     public const string Planting = "Planting";
+    public const string Sitting = "Sitting";
+    public const string Swinging = "Swinging";
 }
 
 internal readonly record struct AppearanceActionSnapshot(
@@ -134,6 +136,12 @@ internal sealed class CompanionAppearanceCoordinator
         this.lastFailures.Remove(identity);
     }
 
+    public void SetPersistentPhase(CompanionIdentity identity, string operationId, string kind, string phase, int facing)
+    {
+        this.actions[identity] = new ActionPulse(operationId, kind, phase, null, NormalizeFacing(facing), 0);
+        this.lastFailures.Remove(identity);
+    }
+
     public void Fail(CompanionIdentity identity, string operationId, string code)
     {
         if (this.actions.TryGetValue(identity, out ActionPulse? pulse) && pulse.OperationId == operationId)
@@ -217,14 +225,24 @@ internal sealed class CompanionAppearanceCoordinator
             if (pulse is null && !visuallyMoving && !taskOwnsFacing)
                 body.faceDirection(facing);
             visual.Farmer.faceDirection(facing);
-            int frame = this.ResolveFrame(record.Identity, body, visual, this.lastUpdateTick, facing, out bool flip);
+            bool seated = pulse is not null && CompanionSeatedPose.IsSeatedKind(pulse.Kind);
+            int frame;
+            bool flip;
+            bool secondaryArm;
+            if (seated)
+                frame = CompanionSeatedPose.Apply(visual.Farmer, facing, out flip, out secondaryArm);
+            else
+            {
+                CompanionSeatedPose.Reset(visual.Farmer);
+                frame = this.ResolveFrame(record.Identity, body, visual, this.lastUpdateTick, facing, out flip);
+                secondaryArm = pulse is not null && CompanionVisualToolAnimation.UsesSecondaryArm(pulse.Kind, pulse.Facing, frame);
+            }
             Vector2 screen = Game1.GlobalToLocal(Game1.viewport, visualPosition);
-            bool idle = pulse is null && !visuallyMoving && !taskOwnsFacing;
+            bool idle = !seated && pulse is null && !visuallyMoving && !taskOwnsFacing;
             UpdateIdleEyes(visual.Farmer, record.Identity, this.lastUpdateTick, idle);
             if (idle)
                 screen.Y += IdleBreathingOffset(record.Identity, this.lastUpdateTick);
             float depth = visual.Farmer.getDrawLayer();
-            bool secondaryArm = pulse is not null && CompanionVisualToolAnimation.UsesSecondaryArm(pulse.Kind, pulse.Facing, frame);
             visual.Farmer.FarmerSprite.setCurrentSingleFrame(frame, 32000, secondaryArm, flip);
             Vector2 origin = new(
                 visual.Farmer.xOffset,
@@ -333,6 +351,7 @@ internal sealed class CompanionAppearanceCoordinator
             AppearanceActionKinds.Fishing when pulse.Phase == "Waiting" => FacingClip(facing, FishWaitUp, FishWaitSide, FishWaitDown, FishWaitSideLeft),
             AppearanceActionKinds.Fishing when pulse.Phase is "Reel" or "Caught" => FacingClip(facing, FishDoneUp, FishDoneSide, FishDoneDown, FishDoneSideLeft),
             AppearanceActionKinds.CombatDagger => FacingClip(facing, DaggerUp, DaggerSide, DaggerDown, DaggerSideLeft),
+            AppearanceActionKinds.Sitting or AppearanceActionKinds.Swinging => FacingClip(facing, SitUp, SitSide, SitDown, SitSideLeft),
             _ => FacingClip(facing, IdleUp, IdleSide, IdleDown, IdleSideLeft),
         };
         flip = clip.Flip;
@@ -484,6 +503,10 @@ internal sealed class CompanionAppearanceCoordinator
     private static readonly VisualClip IdleSide = new(new[] { 6 });
     private static readonly VisualClip IdleUp = new(new[] { 12 });
     private static readonly VisualClip IdleSideLeft = new(IdleSide.Frames, true);
+    private static readonly VisualClip SitDown = new(new[] { 107 });
+    private static readonly VisualClip SitSide = new(new[] { 117 });
+    private static readonly VisualClip SitUp = new(new[] { 113 });
+    private static readonly VisualClip SitSideLeft = new(SitSide.Frames, true);
 
     internal static Farmer CreateVisualFarmer(CompanionAppearanceProfile profile, string runtimeName)
     {

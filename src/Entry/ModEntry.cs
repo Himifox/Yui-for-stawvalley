@@ -13,6 +13,7 @@ public sealed class ModEntry : Mod
         var harmony = new Harmony(this.ModManifest.UniqueID);
         CompanionBodyDrawPatch.Apply(harmony, this.bootstrap.TryRenderNetworkBody);
         FarmerDamagePatch.Apply(harmony, this.bootstrap.ObserveOwnerDamage);
+        SeatInteractionPatch.Apply(harmony, this.bootstrap.IsSyntheticSeatOccupant, this.bootstrap.IsCompanionSeatedAt);
         this.bootstrap.Attach();
     }
 }

@@ -79,6 +79,8 @@ dotnet build YuiToIssho.csproj -c Release -p:EnableModDeploy=false
 | `yui dismiss` | 让 Yui 暂时离开 |
 | `yui follow` | 让 Yui 跟随玩家 |
 | `yui stay` | 让 Yui 原地等待 |
+| `yui sit` | 让 Yui 寻找附近空椅子或秋千坐下 |
+| `yui stand` | 让 Yui 起身并释放座位 |
 | `yui assist on` | 开启共同劳动等待状态 |
 | `yui assist status` | 查看共同劳动状态 |
 | `yui assist off` | 停止共同劳动 |
@@ -87,7 +89,7 @@ dotnet build YuiToIssho.csproj -c Release -p:EnableModDeploy=false
 
 ## 默认功能与实验功能
 
-默认启用的体验包括首次相遇、跟随、交谈、自然共同劳动以及必要的状态反馈。
+默认启用的体验包括首次相遇、跟随、交谈、自然共同劳动、座椅休闲以及必要的状态反馈。Follow 模式下玩家坐下时，Yui 会尝试寻找附近空位陪坐；也可以使用 `yui sit` 和 `yui stand` 主动控制。
 
 以下能力仍属于实验范围，需通过 `EnableExperimentalFeatures` 显式开启：
 

@@ -326,6 +326,8 @@ internal static class MultiplayerRequestValidator
         ["delete"] = Shape(),
         ["follow"] = Shape(),
         ["wait"] = Shape(),
+        ["sit"] = Shape(),
+        ["stand"] = Shape(),
         ["stop"] = Shape(),
         ["assist-start"] = Shape(),
         ["assist-status"] = Shape(),

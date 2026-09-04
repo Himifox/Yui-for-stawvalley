@@ -31,6 +31,7 @@ internal sealed class Bootstrap
     private readonly CompanionProjectionCoordinator projection;
     private readonly TaskExecutionService taskExecution;
     private readonly TaskNavigationService taskNavigation;
+    private readonly CompanionLeisureCoordinator leisure;
     private readonly WateringCoordinator watering;
     private readonly ChoppingCoordinator chopping;
     private readonly MiningCoordinator mining;
@@ -86,7 +87,8 @@ internal sealed class Bootstrap
         this.vitals = new CompanionVitalsCoordinator(this.registry, this.bodies, this.inventories, monitor, () => this.State, () => this.saveDataWritable);
         this.appearance = new CompanionAppearanceCoordinator(this.registry, this.bodies, monitor);
         this.taskNavigation = new TaskNavigationService(this.bodies);
-        this.following = new FollowCoordinator(this.bodies, this.taskNavigation, this.appearance.IsPresenting, monitor);
+        this.leisure = new CompanionLeisureCoordinator(this.registry, this.bodies, this.appearance, this.taskNavigation, monitor);
+        this.following = new FollowCoordinator(this.bodies, this.taskNavigation, identity => this.appearance.IsPresenting(identity) || this.leisure.IsActive(identity), monitor);
         this.networkBodies = new CompanionNetworkBodyResolver();
         this.projection = new CompanionProjectionCoordinator(this.registry, this.bodies, this.inventories, this.appearance, this.networkBodies, monitor);
         this.taskExecution = new TaskExecutionService(this.registry, this.bodies, monitor);
@@ -151,6 +153,7 @@ internal sealed class Bootstrap
             this.work,
             this.assist,
             this.taskExecution,
+            this.leisure,
             this.multiplayer,
             config.EnableExperimentalFeatures,
             config.EnableNaturalWorkAssist,
@@ -218,6 +221,11 @@ internal sealed class Bootstrap
             : this.projection.TryRenderNetworkBody(body, spriteBatch, alpha);
     }
 
+    internal bool IsSyntheticSeatOccupant(long playerId) => this.leisure.IsSyntheticOccupant(playerId);
+
+    internal bool IsCompanionSeatedAt(MapSeat seat, NPC body) => this.leisure.IsBodySeatedAt(seat, body)
+        || this.projection.IsProjectedBodySeatedAt(seat, body);
+
     public void Attach()
     {
         if (this.attached)
@@ -266,6 +274,7 @@ internal sealed class Bootstrap
         this.multiplayer.ResetSession();
         this.plantingPreview.ResetSession();
         this.workRuntime.CancelAll("CANCELLED-BY-LOAD");
+        this.leisure.ClearAll("CANCELLED-BY-LOAD");
         this.taskExecution.ClearRuntime();
         this.work.ClearRuntime();
         this.assist.ClearRuntime();
@@ -382,6 +391,7 @@ internal sealed class Bootstrap
             this.multiplayer.Suspend();
             this.work.SuspendAll("SAVING");
             this.workRuntime.CancelAll("CANCELLED-BY-SAVE");
+            this.leisure.ClearAll("CANCELLED-BY-SAVE");
             this.assist.ReleaseLeases("SAVING");
             this.planting.PauseAll("SAVING");
             this.taskExecution.ClearRuntime();
@@ -430,6 +440,7 @@ internal sealed class Bootstrap
         this.multiplayer.ResetSession();
         this.plantingPreview.ResetSession();
         this.workRuntime.CancelAll("CANCELLED-BY-TITLE");
+        this.leisure.ClearAll("CANCELLED-BY-TITLE");
         this.planting.ClearRuntime();
         this.taskExecution.ClearRuntime();
         this.work.ClearRuntime();
@@ -461,6 +472,7 @@ internal sealed class Bootstrap
                 {
                     this.ProcessOwnerReconnects();
                     this.assist.Update(this.SessionTick);
+                    this.leisure.Update(this.registry.Active, this.SessionTick);
                 }
                 if (Context.IsPlayerFree)
                 {
@@ -669,6 +681,7 @@ internal sealed class Bootstrap
         if (Context.IsMainPlayer)
         {
             this.agents.SuspendAll("DAY-ENDING");
+            this.leisure.ClearAll("DAY-ENDING");
             this.planting.PauseAll("DAY-ENDING");
             this.assist.ReleaseLeases("DAY-ENDING");
         }
@@ -677,6 +690,7 @@ internal sealed class Bootstrap
     private void CancelForVitals(CompanionIdentity identity, string code)
     {
         this.agents.Interrupt(identity, code);
+        this.leisure.Stand(identity, code);
         this.work.Suspend(identity, code);
         this.workRuntime.Cancel(identity, code);
         this.storage.Cancel(identity, code);
@@ -716,6 +730,7 @@ internal sealed class Bootstrap
     private void CancelForDefensiveCombat(CompanionIdentity identity, string code)
     {
         this.agents.Interrupt(identity, code);
+        this.leisure.Stand(identity, code);
         this.work.Suspend(identity, code);
         this.workRuntime.Cancel(identity, code, includeCombat: false);
         this.storage.Cancel(identity, code);

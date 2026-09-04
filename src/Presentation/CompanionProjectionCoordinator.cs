@@ -394,16 +394,26 @@ internal sealed class CompanionProjectionCoordinator
             }
             int facing = projection.Presentation?.Facing ?? projection.ResolveFacing();
             visual.Farmer.faceDirection(facing);
-            int frame = projection.Presentation?.Frame ?? projection.ResolveMovementFrame(facing);
+            bool seated = CompanionSeatedPose.IsSeatedKind(projection.Presentation?.Kind);
+            int frame;
+            bool flip;
+            bool secondaryArm;
+            if (seated)
+                frame = CompanionSeatedPose.Apply(visual.Farmer, facing, out flip, out secondaryArm);
+            else
+            {
+                CompanionSeatedPose.Reset(visual.Farmer);
+                frame = projection.Presentation?.Frame ?? projection.ResolveMovementFrame(facing);
+                flip = facing == 3;
+                secondaryArm = projection.Presentation is CompanionPresentationDto action
+                    && CompanionVisualToolAnimation.UsesSecondaryArm(action.Kind, action.Facing, frame);
+            }
             Vector2 screen = Game1.GlobalToLocal(Game1.viewport, position);
-            bool idle = projection.Presentation is null && !projection.IsMoving;
+            bool idle = !seated && projection.Presentation is null && !projection.IsMoving;
             UpdateIdleEyes(visual.Farmer, state.Identity, idle);
             if (idle)
                 screen.Y += IdleBreathingOffset(state.Identity);
             float depth = visual.Farmer.getDrawLayer();
-            bool flip = facing == 3;
-            bool secondaryArm = projection.Presentation is CompanionPresentationDto action
-                && CompanionVisualToolAnimation.UsesSecondaryArm(action.Kind, action.Facing, frame);
             visual.Farmer.FarmerSprite.setCurrentSingleFrame(frame, 32000, secondaryArm, flip);
             Vector2 origin = new(
                 visual.Farmer.xOffset,
@@ -438,6 +448,17 @@ internal sealed class CompanionProjectionCoordinator
         this.epoch = string.Empty;
         this.snapshotVersion = 0;
         this.estimatedHostTick = 0;
+    }
+
+    public bool IsProjectedBodySeatedAt(MapSeat seat, NPC body)
+    {
+        if (!CompanionBodyBinder.TryReadIdentity(body, out CompanionIdentity identity, out ulong generation)
+            || !this.projections.TryGetValue(identity, out ProjectedCompanion? projection)
+            || projection.State.BodyGeneration != generation
+            || !CompanionSeatedPose.IsSeatedKind(projection.Presentation?.Kind))
+            return false;
+        Vector2 tilePosition = body.Position / Game1.tileSize;
+        return seat.GetSeatPositions().Any(position => Vector2.DistanceSquared(position, tilePosition) < 0.01f);
     }
 
     private VisualFarmer GetVisual(CompanionSnapshotDto state)
@@ -764,7 +785,8 @@ internal sealed class CompanionProjectionCoordinator
         or AppearanceActionKinds.Mowing or AppearanceActionKinds.Digging or AppearanceActionKinds.Petting
         or AppearanceActionKinds.Milking or AppearanceActionKinds.Shearing or AppearanceActionKinds.Fishing
         or AppearanceActionKinds.CombatSword or AppearanceActionKinds.CombatDagger or AppearanceActionKinds.CombatClub
-        or AppearanceActionKinds.Handoff or AppearanceActionKinds.Crafting or AppearanceActionKinds.Planting;
+        or AppearanceActionKinds.Handoff or AppearanceActionKinds.Crafting or AppearanceActionKinds.Planting
+        or AppearanceActionKinds.Sitting or AppearanceActionKinds.Swinging;
     private static bool ValidPhase(string? phase, bool allowClear) => phase is "Prepare" or "Commit" or "Cast" or "Waiting" or "Reel" or "Caught" || (allowClear && phase == "Clear");
     private static int NormalizeFacing(int facing) => facing is >= 0 and <= 3 ? facing : 2;
     private static int IdleFrame(int facing) => facing switch { 0 => 12, 1 => 6, 2 => 0, _ => 6 };
