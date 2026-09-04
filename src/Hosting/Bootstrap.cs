@@ -258,6 +258,7 @@ internal sealed class Bootstrap
         this.helper.Events.GameLoop.UpdateTicked += this.OnUpdateTicked;
         this.helper.Events.GameLoop.DayStarted += this.OnDayStarted;
         this.helper.Events.GameLoop.DayEnding += this.OnDayEnding;
+        this.helper.Events.Player.Warped += this.OnPlayerWarped;
         this.helper.Events.Display.RenderedWorld += this.OnRenderedWorld;
         this.helper.Events.World.ObjectListChanged += this.OnObjectListChanged;
         this.helper.Events.World.TerrainFeatureListChanged += this.OnTerrainFeatureListChanged;
@@ -493,7 +494,7 @@ internal sealed class Bootstrap
                         this.DrainPendingOutputs();
                 }
                 else
-                    this.following.PauseAll(this.registry.Active);
+                    this.following.Update(this.registry.Active, this.SessionTick);
             }
             if (e.IsMultipleOf(6))
             {
@@ -501,6 +502,12 @@ internal sealed class Bootstrap
                 this.multiplayer.Update(this.SessionTick);
             }
         }
+    }
+
+    private void OnPlayerWarped(object? sender, WarpedEventArgs e)
+    {
+        if (this.State == LifecycleState.SaveReady && this.saveDataWritable)
+            this.following.RegroupAfterWarp(e.Player, this.registry.Active, this.SessionTick);
     }
 
     private NekoBridgeState CaptureNekoBridgeState(bool includeNearby)

@@ -40,14 +40,46 @@ internal sealed class FollowCoordinator
         foreach (CompanionIdentity stale in this.runtime.Keys.Where(identity => !activeIdentities.Contains(identity)).ToArray())
             this.runtime.Remove(stale);
 
-        if (!Context.IsMainPlayer || !Context.IsPlayerFree)
+        if (!Context.IsMainPlayer)
         {
             this.PauseAll(active);
             return;
         }
 
         foreach (CompanionRecord record in active)
+        {
+            Farmer? owner = Game1.GetPlayer(record.OwnerId, onlyOnline: true);
+            if (owner?.IsLocalPlayer == true && !Context.IsPlayerFree)
+            {
+                this.bodies.Halt(record.Identity);
+                continue;
+            }
             this.UpdateOne(record, tick);
+        }
+    }
+
+    public void RegroupAfterWarp(Farmer owner, IEnumerable<CompanionRecord> records, ulong tick)
+    {
+        if (!Context.IsMainPlayer || owner.currentLocation is null)
+            return;
+        CompanionRecord? record = records.FirstOrDefault(candidate => candidate.OwnerId == owner.UniqueMultiplayerID);
+        if (record is null
+            || !record.WantsBody
+            || record.Mode != CompanionModes.Follow
+            || !string.IsNullOrWhiteSpace(record.ActiveTransactionId)
+            || this.isPresenting(record.Identity))
+            return;
+
+        if (this.bodies.TryGetBody(record.Identity, out NPC body)
+            && ReferenceEquals(body.currentLocation, owner.currentLocation))
+            return;
+        BodyBindResult result = this.bodies.TryGetBody(record.Identity, out _)
+            ? this.bodies.Rebind(record, owner)
+            : this.bodies.Bind(record, owner);
+        FollowRuntime state = this.GetRuntime(record.Identity, owner.Position, tick);
+        state.Reset(owner.Position, tick, tick + MinimumRepathDelayTicks);
+        if (!result.IsSuccess)
+            this.monitor.Log($"HY-NAV-{result.Code}: {result.Message}", LogLevel.Warn);
     }
 
     public void PauseAll(IEnumerable<CompanionRecord> records)
