@@ -49,42 +49,48 @@ internal sealed class CompanionWorldInteractionCoordinator
         Game1.player.faceDirection(FacingToward(playerTile, targetTile));
         hostBody?.faceDirection(FacingToward(targetTile, playerTile));
         bool owned = identity.OwnerId == Game1.player.UniqueMultiplayerID;
-        if (owned && Game1.player.ActiveObject is StardewValley.Object gift && gift.canBeGivenAsGift() && !gift.questItem.Value)
+        if (!owned)
         {
-            var fields = new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["playerSlot"] = (Game1.player.CurrentToolIndex + 1).ToString(),
-                ["itemId"] = gift.QualifiedItemId,
-            };
-            NetworkCommandResult result = this.multiplayer.Submit(identity, "gift", fields);
-            if (!result.IsSuccess)
-                Game1.showRedMessage(result.Message);
-            else
-                Game1.playSound("give_gift");
+            if (this.socialMenu.TryOpenDialogue(identity))
+                Game1.playSound("smallSelect");
             return;
         }
-
-        if (owned && e.Button == SButton.MouseRight)
-        {
-            NetworkCommandResult result = this.multiplayer.Submit(identity, "hug", new Dictionary<string, string>());
-            if (!result.IsSuccess)
-                Game1.showRedMessage(result.Message);
-            else
-                Game1.playSound("dwop");
+        if (!this.socialMenu.TryGetIdentity(identity, out CompanionMenuIdentitySnapshot snapshot))
             return;
-        }
+        StardewValley.Object? gift = Game1.player.ActiveObject;
+        bool canGift = gift is not null && gift.canBeGivenAsGift() && !gift.questItem.Value;
+        Game1.activeClickableMenu = new CompanionInteractionMenu(
+            snapshot.DisplayName,
+            canGift,
+            canGift ? gift!.DisplayName : string.Empty,
+            command => this.Execute(identity, command));
+    }
 
-        if (owned)
+    private void Execute(CompanionIdentity identity, string command)
+    {
+        Dictionary<string, string> fields = new(StringComparer.Ordinal);
+        if (command == "gift")
         {
-            NetworkCommandResult result = this.multiplayer.Submit(identity, "talk", new Dictionary<string, string>());
-            if (!result.IsSuccess)
+            if (Game1.player.ActiveObject is not StardewValley.Object gift || !gift.canBeGivenAsGift() || gift.questItem.Value)
             {
-                Game1.showRedMessage(result.Message);
+                Game1.showRedMessage("请先手持一件可赠送物品。 / Hold a giftable item first.");
+                Game1.playSound("cancel");
                 return;
             }
+            fields["playerSlot"] = (Game1.player.CurrentToolIndex + 1).ToString();
+            fields["itemId"] = gift.QualifiedItemId;
         }
-        if (this.socialMenu.TryOpenDialogue(identity))
-            Game1.playSound("smallSelect");
+        Game1.exitActiveMenu();
+        NetworkCommandResult result = this.multiplayer.Submit(identity, command, fields);
+        if (!result.IsSuccess)
+        {
+            Game1.showRedMessage(result.Message);
+            Game1.playSound("cancel");
+            return;
+        }
+        if (command == "talk")
+            this.socialMenu.TryOpenDialogue(identity);
+        Game1.playSound(command switch { "gift" => "give_gift", "hug" => "dwop", _ => "smallSelect" });
     }
 
     private bool TryFindTarget(bool mouseTarget, Vector2 absolutePixels, Point grabTile, Point playerTile, out CompanionIdentity identity, out Point targetTile, out NPC? hostBody)

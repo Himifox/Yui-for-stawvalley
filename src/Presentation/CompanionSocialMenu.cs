@@ -27,6 +27,12 @@ internal sealed class CompanionSocialMenuCoordinator
         return true;
     }
 
+    public bool TryGetIdentity(CompanionIdentity identity, out CompanionMenuIdentitySnapshot snapshot)
+    {
+        snapshot = this.GetIdentityView().FirstOrDefault(candidate => candidate.Identity == identity)!;
+        return snapshot is not null;
+    }
+
     internal IReadOnlyList<CompanionMenuIdentitySnapshot> GetIdentityView() =>
         Context.IsWorldReady ? this.projection.BuildMenuIdentityView(Game1.player.UniqueMultiplayerID) : Array.Empty<CompanionMenuIdentitySnapshot>();
 
