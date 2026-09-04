@@ -271,6 +271,42 @@ internal sealed class CompanionInventoryStore
         }
     }
 
+    public InventoryActionResult TryGiftOne(CompanionIdentity identity, Farmer owner, int oneBasedOwnerSlot, string expectedItemId)
+    {
+        if (!Game1.player.team.GetOrCreateGlobalInventoryMutex(GetNamespace(identity)).IsLockHeld())
+            return InventoryActionResult.Failure("BAG-LOCK-REQUIRED", "The Yui bag gift lock is not held; no item was consumed.");
+
+        int sourceIndex = oneBasedOwnerSlot - 1;
+        if (sourceIndex < 0 || sourceIndex >= owner.Items.Count || owner.Items[sourceIndex] is not StardewValley.Object source)
+            return InventoryActionResult.Failure("GIFT-MISSING", "The selected player slot no longer contains a giftable object.");
+        if (!string.Equals(source.QualifiedItemId, expectedItemId, StringComparison.Ordinal))
+            return InventoryActionResult.Failure("GIFT-CHANGED", "The selected item changed before Yui could accept it.");
+        if (!source.canBeGivenAsGift() || source.questItem.Value || source.modData.ContainsKey(StorageTags.ResponsibilityId))
+            return InventoryActionResult.Failure("GIFT-NOT-ALLOWED", "That object cannot be given to Yui.");
+        if (this.Count(identity) >= Capacity)
+            return InventoryActionResult.Failure("BAG-FULL", "Yui's bag is full, so the gift was not consumed.");
+
+        Inventory bag = this.Get(identity);
+        bool movedExact = source.Stack == 1;
+        Item gift = movedExact ? source : source.getOne();
+        gift.Stack = 1;
+        try
+        {
+            bag.Add(gift);
+            if (movedExact)
+                owner.Items[sourceIndex] = null;
+            else
+                source.Stack--;
+            return InventoryActionResult.Success("GIFT-ACCEPTED", $"Yui accepted one {gift.DisplayName}; it is now in her bag.");
+        }
+        catch (Exception ex)
+        {
+            RemoveExact(bag, gift);
+            owner.Items[sourceIndex] = source;
+            return InventoryActionResult.Failure("GIFT-ROLLED-BACK", $"The gift stayed in the player's inventory after the bag transfer failed: {ex.Message}");
+        }
+    }
+
     public InventoryActionResult TryTake(CompanionIdentity identity, Farmer owner, int oneBasedBagSlot)
     {
         if (!Game1.player.team.GetOrCreateGlobalInventoryMutex(GetNamespace(identity)).IsLockHeld())

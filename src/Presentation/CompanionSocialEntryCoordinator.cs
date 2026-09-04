@@ -112,14 +112,18 @@ internal sealed class CompanionSocialEntryCoordinator
             if (this.injectedEntries.Values.Any(existing => existing.Identity == identity.Identity))
                 continue;
             (NPC character, CharacterData data) = CompanionMenuIdentityFactory.CreateNativeSocialNpc(identity, this.GetTransparentNpcSprite());
-            var friendship = new Friendship();
+            var friendship = new Friendship(identity.BondPoints)
+            {
+                TalkedToToday = identity.TalkedToday,
+                GiftsToday = 0,
+            };
             object entry = constructor.Invoke(new object[] { character, friendship, data, string.Empty });
             SetEntryField(entryType, entry, "InternalName", internalName);
             SetEntryField(entryType, entry, "DisplayName", identity.DisplayName);
             SetEntryField(entryType, entry, "IsMet", true);
             SetEntryField(entryType, entry, "IsDatable", false);
             SetEntryField(entryType, entry, "IsPlayer", false);
-            SetEntryField(entryType, entry, "HeartLevel", 0);
+            SetEntryField(entryType, entry, "HeartLevel", identity.HeartLevel);
             entries.Insert(insertAt++, entry);
             this.injectedEntries.Add(entry, identity);
         }

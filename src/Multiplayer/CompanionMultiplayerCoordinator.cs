@@ -711,7 +711,7 @@ internal sealed class CompanionMultiplayerCoordinator
     {
         if (!IsRecoverableOperation(dto.Command))
             return;
-        string operationId = dto.Fields.TryGetValue("operationId", out string? supplied) ? supplied : $"r9-{dto.RequestId}";
+        string operationId = dto.Fields.TryGetValue("operationId", out string? supplied) ? supplied : $"r10-{dto.RequestId}";
         if (operationId.Length is > 0 and <= 128)
             this.unknownOperations[operationId] = new UnknownOutboundOperation(new CompanionIdentity(dto.OwnerId, dto.Slot), operationId, dto.Command);
     }

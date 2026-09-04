@@ -84,7 +84,16 @@ internal sealed class CompanionRegistry
             record.Deliveries ??= new List<DeliveryRecord>();
             record.Vitals ??= new CompanionVitalsRecord();
             record.Vitals.RecentCosts ??= new List<VitalCostReceiptRecord>();
+            record.Bond ??= new CompanionBondRecord();
             record.Appearance ??= new CompanionAppearanceProfile();
+
+            if (record.Bond.Points is < 0 or > CompanionBondRecord.MaxPoints
+                || record.Bond.LastTalkedDay < -1
+                || record.Bond.LastAffectionDay < -1
+                || record.Bond.LastGiftDay < -1
+                || record.Bond.GiftWeek < -1
+                || record.Bond.GiftsThisWeek is < 0 or > 2)
+                return RegistryLoadResult.Failure("INVALID-COMPANION-BOND", $"Identity {identity} has invalid independent bond state.");
 
             if (record.WorkDirective is not null)
             {

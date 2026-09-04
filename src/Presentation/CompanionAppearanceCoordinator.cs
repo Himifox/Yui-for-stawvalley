@@ -267,6 +267,7 @@ internal sealed class CompanionAppearanceCoordinator
                     pulse.Tool.drawInMenu(spriteBatch, icon, 0.45f, 0.9f, Math.Min(1f, depth + 0.0002f), StackDrawType.Hide, Color.White, drawShadow: false);
                 }
             }
+            body.DrawEmote(spriteBatch);
             visual.LastFailure = null;
             return true;
         }

@@ -32,6 +32,9 @@ internal sealed class CompanionNetworkBodyResolver
         {
             if (!CompanionBodyBinder.TryReadIdentity(body, out CompanionIdentity identity, out ulong generation))
                 continue;
+            // This plain Character field is not part of NPC NetFields, so each client
+            // restores the companion collision policy after resolving the replicated body.
+            body.farmerPassesThrough = true;
             if (!next.TryGetValue(identity, out ResolvedNetworkBody existing) || generation > existing.Generation)
                 next[identity] = new ResolvedNetworkBody(body, generation);
         }

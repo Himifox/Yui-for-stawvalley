@@ -35,7 +35,8 @@ Yui 是生活在游戏世界中的农场伙伴，而不是一键清空农场的�
 |---|---|
 | 持久伙伴 | 每位玩家拥有唯一的 Yui；召回、换图和读档不会更换身份 |
 | 陪伴移动 | 支持召唤、跟随、等待、停止与重聚 |
-| 自然表达 | 使用原版对话框和世界气泡进行交谈与状态反馈 |
+| 自然表达 | 可直接交谈、送礼和拥抱，并使用原版对话框、世界气泡与爱心反馈 |
+| 独立亲密度 | 交谈、每日亲昵与送礼会积累 10 心亲密度，不污染原版村民、任务或婚姻数据 |
 | 共同劳动 | 玩家真实挥斧或挥镰后，Yui 使用自己的工具协助附近工作 |
 | 状态边界 | 缺少工具、体力不足、目标失效或保存时不会产生假成功 |
 | 多人协作 | Host 负责验证世界动作，客户端展示确认后的结果 |
@@ -81,6 +82,7 @@ dotnet build YuiToIssho.csproj -c Release -p:EnableModDeploy=false
 | `yui stay` | 让 Yui 原地等待 |
 | `yui sit` | 让 Yui 寻找附近空椅子或秋千坐下 |
 | `yui stand` | 让 Yui 起身并释放座位 |
+| `yui hug` | 在 Yui 身边拥抱或摸摸她 |
 | `yui assist on` | 开启共同劳动等待状态 |
 | `yui assist status` | 查看共同劳动状态 |
 | `yui assist off` | 停止共同劳动 |
@@ -90,6 +92,8 @@ dotnet build YuiToIssho.csproj -c Release -p:EnableModDeploy=false
 ## 默认功能与实验功能
 
 默认启用的体验包括首次相遇、跟随、交谈、自然共同劳动、座椅休闲以及必要的状态反馈。Follow 模式下玩家坐下时，Yui 会尝试寻找附近空位陪坐；也可以使用 `yui sit` 和 `yui stand` 主动控制。
+
+靠近 Yui 后，按动作键可以交谈；手持可赠送物品时按动作键会送出其中一件，并安全放入 Yui 的背包。空手鼠标右键或使用 `yui hug` 可以拥抱/摸头。交谈和亲昵每天首次增加亲密度，礼物遵循每天一件、每周两件的限制；当前心数会显示在社交页与 `yui status` 中。
 
 以下能力仍属于实验范围，需通过 `EnableExperimentalFeatures` 显式开启：
 
@@ -130,7 +134,7 @@ dotnet build YuiToIssho.csproj -c Release -p:EnableModDeploy=false
 ```text
 src/
 ├── Domain/          身份、体征、工作指令、回执与持久化模型
-├── Companions/      伙伴注册、身体绑定、跟随与体征协调
+├── Companions/      伙伴注册、身体绑定、跟随、亲密度与体征协调
 ├── Runtime/         Agent 感知、计划、调度与任务执行
 ├── Work/            工作策略、动作注册与工作执行器
 ├── Inventory/       背包、储物、制作、播种与交付

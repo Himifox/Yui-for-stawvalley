@@ -86,6 +86,10 @@ internal sealed class CompanionProjectionCoordinator
                     bodyPresent ? Bounded(body.currentLocation!.NameOrUniqueName, 128) : string.Empty,
                     record.Mode,
                     record.Vitals.State,
+                    record.Bond.Points,
+                    record.Bond.GetHeartLevel(),
+                    record.Bond.LastTalkedDay == CurrentDay,
+                    record.Bond.LastAffectionDay == CurrentDay,
                     record.Vitals.Health,
                     record.Vitals.MaxHealth,
                     record.Vitals.Stamina,
@@ -109,6 +113,10 @@ internal sealed class CompanionProjectionCoordinator
                 state.LocationKey,
                 state.Mode,
                 state.VitalState,
+                state.BondPoints,
+                state.HeartLevel,
+                state.TalkedToday,
+                state.AffectionToday,
                 state.Health,
                 state.MaxHealth,
                 state.Stamina,
@@ -199,6 +207,10 @@ internal sealed class CompanionProjectionCoordinator
                 Stamina = record.Vitals.Stamina,
                 MaxStamina = record.Vitals.MaxStamina,
                 VitalState = record.Vitals.State,
+                BondPoints = record.Bond.Points,
+                HeartLevel = record.Bond.GetHeartLevel(),
+                TalkedToday = record.Bond.LastTalkedDay == CurrentDay,
+                AffectionToday = record.Bond.LastAffectionDay == CurrentDay,
                 WorkKind = Bounded(record.WorkDirective?.Kind, 32),
                 WorkLocationKey = Bounded(record.WorkDirective?.LocationKey, 256),
                 WorkAnchorX = record.WorkDirective?.AnchorX ?? 0,
@@ -428,6 +440,7 @@ internal sealed class CompanionProjectionCoordinator
                     icon?.drawInMenu(spriteBatch, screen + ToolIconOffset(presentation.Facing), 0.45f, 0.9f, Math.Min(1f, depth + 0.0002f), StackDrawType.Hide, Color.White * alpha, drawShadow: false);
                 }
             }
+            body?.DrawEmote(spriteBatch);
             projection.RenderFaulted = false;
             return true;
         }
@@ -521,6 +534,8 @@ internal sealed class CompanionProjectionCoordinator
                 || state.Stamina < 0
                 || state.Stamina > state.MaxStamina
                 || !CompanionVitalStates.IsValid(state.VitalState)
+                || state.BondPoints is < 0 or > CompanionBondRecord.MaxPoints
+                || state.HeartLevel != Math.Clamp(state.BondPoints / 250, 0, 10)
                 || !ValidAgentSummary(state)
                 || !ValidCraftSummary(state)
                 || !ValidPlantingSummary(state)
@@ -534,6 +549,8 @@ internal sealed class CompanionProjectionCoordinator
         }
         return ProjectionApplyResult.Success("SNAPSHOT-VALID", "The full projection is bounded and internally consistent.");
     }
+
+    private static int CurrentDay => (int)Math.Min((uint)int.MaxValue, Game1.stats.DaysPlayed);
 
     public bool TryFindInteractionTarget(GameLocation location, Vector2 absolutePixels, Point grabTile, Point playerTile, bool mouseTarget, out CompanionIdentity identity, out Point targetTile)
     {

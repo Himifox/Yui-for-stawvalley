@@ -4,7 +4,7 @@ namespace YuiToIssho;
 
 internal static class MultiplayerProtocol
 {
-    public const int Version = 9;
+    public const int Version = 10;
     public const string ModId = "Himifox.YuiToIssho";
     public const int MaxRequestCharacters = 2048;
     public const int MaxFieldCount = 10;
@@ -14,12 +14,12 @@ internal static class MultiplayerProtocol
 
     public static class MessageTypes
     {
-        public const string CommandRequest = "r9.command-request.v9";
-        public const string CommandReceipt = "r9.command-receipt.v9";
-        public const string SnapshotRequest = "r9.snapshot-request.v9";
-        public const string RuntimeSnapshot = "r9.runtime-snapshot.v9";
-        public const string PresentationEvent = "r9.presentation-event.v9";
-        public const string SpeechEvent = "r9.speech-event.v9";
+        public const string CommandRequest = "r10.command-request.v10";
+        public const string CommandReceipt = "r10.command-receipt.v10";
+        public const string SnapshotRequest = "r10.snapshot-request.v10";
+        public const string RuntimeSnapshot = "r10.runtime-snapshot.v10";
+        public const string PresentationEvent = "r10.presentation-event.v10";
+        public const string SpeechEvent = "r10.speech-event.v10";
 
         public static bool IsKnown(string type) => type is CommandRequest or CommandReceipt or SnapshotRequest or RuntimeSnapshot or PresentationEvent or SpeechEvent;
     }
@@ -96,6 +96,10 @@ internal sealed class CompanionSnapshotDto
     public float Stamina { get; set; }
     public float MaxStamina { get; set; }
     public string VitalState { get; set; } = string.Empty;
+    public int BondPoints { get; set; }
+    public int HeartLevel { get; set; }
+    public bool TalkedToday { get; set; }
+    public bool AffectionToday { get; set; }
     public string WorkKind { get; set; } = string.Empty;
     public string WorkLocationKey { get; set; } = string.Empty;
     public int WorkAnchorX { get; set; }
@@ -328,6 +332,9 @@ internal static class MultiplayerRequestValidator
         ["wait"] = Shape(),
         ["sit"] = Shape(),
         ["stand"] = Shape(),
+        ["talk"] = Shape(),
+        ["hug"] = Shape(),
+        ["gift"] = Shape("playerSlot", "itemId"),
         ["stop"] = Shape(),
         ["assist-start"] = Shape(),
         ["assist-status"] = Shape(),

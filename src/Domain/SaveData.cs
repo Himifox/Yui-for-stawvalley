@@ -51,7 +51,28 @@ internal sealed class CompanionRecord
 
     public CompanionVitalsRecord Vitals { get; set; } = new();
 
+    public CompanionBondRecord Bond { get; set; } = new();
+
     public CompanionAppearanceProfile Appearance { get; set; } = new();
 
     public CompanionIdentity Identity => new(this.OwnerId, this.Slot);
+}
+
+internal sealed class CompanionBondRecord
+{
+    public const int MaxPoints = 2500;
+
+    public int Points { get; set; }
+
+    public int LastTalkedDay { get; set; } = -1;
+
+    public int LastAffectionDay { get; set; } = -1;
+
+    public int LastGiftDay { get; set; } = -1;
+
+    public int GiftWeek { get; set; } = -1;
+
+    public int GiftsThisWeek { get; set; }
+
+    public int GetHeartLevel() => Math.Clamp(this.Points / 250, 0, 10);
 }

@@ -33,6 +33,7 @@ internal sealed class CompanionCommands
     private readonly CompanionOwnerWorkAssistCoordinator assist;
     private readonly TaskExecutionService taskExecution;
     private readonly CompanionLeisureCoordinator leisure;
+    private readonly CompanionBondCoordinator bond;
     private readonly IMonitor monitor;
     private readonly Func<LifecycleState> getLifecycleState;
     private readonly Func<bool> canMutateSave;
@@ -68,6 +69,7 @@ internal sealed class CompanionCommands
         CompanionOwnerWorkAssistCoordinator assist,
         TaskExecutionService taskExecution,
         CompanionLeisureCoordinator leisure,
+        CompanionBondCoordinator bond,
         CompanionMultiplayerCoordinator multiplayer,
         bool experimentalFeaturesEnabled,
         bool naturalWorkAssistEnabled,
@@ -99,6 +101,7 @@ internal sealed class CompanionCommands
         this.assist = assist;
         this.taskExecution = taskExecution;
         this.leisure = leisure;
+        this.bond = bond;
         this.multiplayer = multiplayer;
         this.experimentalFeaturesEnabled = experimentalFeaturesEnabled;
         this.naturalWorkAssistEnabled = naturalWorkAssistEnabled;
@@ -111,7 +114,7 @@ internal sealed class CompanionCommands
     {
         commands.Add(
             "yui",
-            "Manage Yui. Usage: yui [help|status|summon|dismiss|follow|stay|sit|stand|assist <on|off|status>]",
+            "Manage Yui. Usage: yui [help|status|summon|dismiss|follow|stay|sit|stand|hug|assist <on|off|status>]",
             this.OnCommand
         );
     }
@@ -141,6 +144,7 @@ internal sealed class CompanionCommands
             case "wait": command = "wait"; break;
             case "sit": command = "sit"; break;
             case "stand": command = "stand"; break;
+            case "hug": command = "hug"; break;
             case "stop": command = "stop"; break;
             case "work_stop": command = "work-stop"; break;
             case "work_resume": command = "work-resume"; break;
@@ -323,8 +327,9 @@ internal sealed class CompanionCommands
         if (!this.experimentalFeaturesEnabled && !IsEverydayRoutedCommand(request.Command))
             return NetworkCommandResult.Failure("EXPERIMENTAL-FEATURE-DISABLED", "The host has not enabled experimental commands.");
         bool readOnlyRequest = request.Command is "assist-status" or "work-status" or "craft-list" or "craft-preview" or "craft-status" or "plant-options" or "plant-preview" or "plant-status" or "operation-status";
+        bool socialRequest = request.Command is "talk" or "hug" or "gift";
         bool craftMenuRequest = request.Command.StartsWith("craft-", StringComparison.Ordinal) && Game1.activeClickableMenu is CompanionCraftingMenu;
-        if ((!Context.IsPlayerFree || Game1.activeClickableMenu is not null) && !craftMenuRequest && !readOnlyRequest)
+        if ((!Context.IsPlayerFree || Game1.activeClickableMenu is not null) && !craftMenuRequest && !readOnlyRequest && !socialRequest)
             return NetworkCommandResult.Failure("PLAYER-BUSY", "The host lifecycle is not free for a new authoritative request.");
         if (request.Identity.OwnerId != request.SenderPlayerId)
             return NetworkCommandResult.Failure("NOT-OWNER", "The sender does not own the requested companion.");
@@ -337,7 +342,7 @@ internal sealed class CompanionCommands
         string[] coordinatorArgs = BuildCoordinatorArgs(request);
         if (IsAgentMutation(request.Command))
             this.interruptAgent?.Invoke(request.Identity, $"MANUAL-{request.Command.ToUpperInvariant()}");
-        if (request.Command is not ("sit" or "stand" or "assist-status" or "work-status" or "craft-list" or "craft-preview" or "craft-status" or "plant-options" or "plant-preview" or "plant-status" or "combat-options" or "combat-status" or "operation-status"))
+        if (request.Command is not ("sit" or "stand" or "talk" or "hug" or "gift" or "assist-status" or "work-status" or "craft-list" or "craft-preview" or "craft-status" or "plant-options" or "plant-preview" or "plant-status" or "combat-options" or "combat-status" or "operation-status"))
             this.leisure.Stand(request.Identity, $"INTERRUPTED-BY-{request.Command.ToUpperInvariant()}");
         this.captureResult = true;
         this.capturedResult = default;
@@ -352,6 +357,9 @@ internal sealed class CompanionCommands
                 case "wait": this.SetMode(request.Identity, CompanionModes.Wait, "WAITING"); break;
                 case "sit": this.Sit(request.Identity, owner); break;
                 case "stand": this.LogLeisure(this.leisure.Stand(request.Identity, "PLAYER-STOOD", suppressAutomaticJoin: true)); break;
+                case "talk": this.LogBond(this.bond.Talk(request.Identity, owner)); break;
+                case "hug": this.LogBond(this.bond.Hug(request.Identity, owner)); break;
+                case "gift": this.bond.Gift(request.Identity, owner, int.Parse(request.Fields["playerSlot"]), request.Fields["itemId"], this.LogBond); break;
                 case "stop": this.SetMode(request.Identity, CompanionModes.Wait, "STOPPED"); break;
                 case "assist-start": this.AssistStart(request.Identity, owner); break;
                 case "assist-status": this.LogAssist(this.assist.Status(request.Identity)); break;
@@ -1593,7 +1601,7 @@ internal sealed class CompanionCommands
     private void PlantStart(CompanionIdentity identity, Farmer owner, ValidatedCommandRequest request)
     {
         PlantingScope scope = RadiusPlantingScope(owner, int.Parse(request.Fields["radius"]));
-        string operationId = request.Fields.GetValueOrDefault("operationId") ?? $"r9-{request.RequestId}";
+        string operationId = request.Fields.GetValueOrDefault("operationId") ?? $"r10-{request.RequestId}";
         this.LogPlant(this.planting.Start(identity, owner, request.Fields["seedOptionId"], int.Parse(request.Fields["count"]), scope, operationId));
     }
 
@@ -1632,7 +1640,7 @@ internal sealed class CompanionCommands
         this.Log(
             true,
             "HELP",
-            "Everyday commands: yui status | summon | dismiss | follow | stay | sit | stand | assist <on|off|status>. Use 'yui help advanced' for experimental command groups.");
+            "Everyday commands: yui status | summon | dismiss | follow | stay | sit | stand | hug | assist <on|off|status>. Use 'yui help advanced' for experimental command groups.");
         if (!advanced)
             return;
 
@@ -1685,7 +1693,7 @@ internal sealed class CompanionCommands
         "water" or "chop" or "mine" or "harvest" or "forage" or "mow" or "dig" or "care" or "fish" or "fight" or "delete";
 
     private static bool IsEverydayRoutedCommand(string command) => command is
-        "summon" or "recall" or "follow" or "wait" or "sit" or "stand" or "stop" or
+        "summon" or "recall" or "follow" or "wait" or "sit" or "stand" or "talk" or "hug" or "gift" or "stop" or
         "assist-start" or "assist-status" or "assist-stop";
 
     private static bool TryBuildMutation(string action, string[] args, out string command, out Dictionary<string, string> fields, out string error)
@@ -1693,7 +1701,7 @@ internal sealed class CompanionCommands
         command = action;
         fields = new Dictionary<string, string>(StringComparer.Ordinal);
         error = string.Empty;
-        if (action is "summon" or "recall" or "delete" or "follow" or "wait" or "sit" or "stand" or "stop")
+        if (action is "summon" or "recall" or "delete" or "follow" or "wait" or "sit" or "stand" or "hug" or "stop")
         {
             if (args.Length != 2)
                 error = $"Usage: yui {action}.";
@@ -1971,7 +1979,7 @@ internal sealed class CompanionCommands
     {
         string slot = request.Identity.Slot.ToString();
         IReadOnlyDictionary<string, string> fields = request.Fields;
-        string operationId = fields.GetValueOrDefault("operationId") ?? $"r9-{request.RequestId}";
+        string operationId = fields.GetValueOrDefault("operationId") ?? $"r10-{request.RequestId}";
         return request.Command switch
         {
             "bag-give" => new[] { "bag", slot, "give", fields["playerSlot"] },
@@ -1997,7 +2005,7 @@ internal sealed class CompanionCommands
         };
     }
 
-    private static bool IsAgentMutation(string command) => command is not ("assist-status" or "work-status" or "craft-list" or "craft-preview" or "craft-status" or "plant-options" or "plant-preview" or "plant-status" or "combat-options" or "combat-status" or "operation-status");
+    private static bool IsAgentMutation(string command) => command is not ("talk" or "hug" or "gift" or "assist-status" or "work-status" or "craft-list" or "craft-preview" or "craft-status" or "plant-options" or "plant-preview" or "plant-status" or "combat-options" or "combat-status" or "operation-status");
 
     private void ListOwned()
     {
@@ -2018,7 +2026,7 @@ internal sealed class CompanionCommands
             this.Log(
                 true,
                 "STATUS",
-                $"{record.DisplayName}: {presence}, {activity}, health {record.Vitals.Health}/{record.Vitals.MaxHealth}, stamina {MathF.Round(record.Vitals.Stamina)}/{MathF.Round(record.Vitals.MaxStamina)}, assist {assistState}.");
+                $"{record.DisplayName}: {presence}, {activity}, bond {record.Bond.GetHeartLevel()}/10 hearts ({record.Bond.Points}/{CompanionBondRecord.MaxPoints}), health {record.Vitals.Health}/{record.Vitals.MaxHealth}, stamina {MathF.Round(record.Vitals.Stamina)}/{MathF.Round(record.Vitals.MaxStamina)}, assist {assistState}.");
         }
     }
 
@@ -2078,6 +2086,8 @@ internal sealed class CompanionCommands
     private void LogTask(TaskExecutionResult result) => this.Log(result.IsSuccess, result.Code, result.Message);
 
     private void LogLeisure(LeisureActionResult result) => this.Log(result.IsSuccess, result.Code, result.Message);
+
+    private void LogBond(BondActionResult result) => this.Log(result.IsSuccess, result.Code, result.Message);
 
     private bool CheckVitals(CompanionIdentity identity, string kind)
     {

@@ -56,6 +56,7 @@ internal sealed class Bootstrap
     private readonly CompanionCommands commands;
     private readonly CompanionMultiplayerCoordinator multiplayer;
     private readonly CompanionSpeechCoordinator speech;
+    private readonly CompanionBondCoordinator bond;
     private readonly CompanionDiagnosticsPanel diagnostics;
     private readonly CommandCursorCoordinator commandCursor;
     private readonly CompanionCraftingMenuCoordinator craftingMenu;
@@ -86,6 +87,7 @@ internal sealed class Bootstrap
         this.bodies = new CompanionBodyBinder(monitor);
         this.vitals = new CompanionVitalsCoordinator(this.registry, this.bodies, this.inventories, monitor, () => this.State, () => this.saveDataWritable);
         this.appearance = new CompanionAppearanceCoordinator(this.registry, this.bodies, monitor);
+        this.bond = new CompanionBondCoordinator(this.registry, this.bodies, this.inventories, this.appearance);
         this.taskNavigation = new TaskNavigationService(this.bodies);
         this.leisure = new CompanionLeisureCoordinator(this.registry, this.bodies, this.appearance, this.taskNavigation, monitor);
         this.following = new FollowCoordinator(this.bodies, this.taskNavigation, identity => this.appearance.IsPresenting(identity) || this.leisure.IsActive(identity), monitor);
@@ -154,6 +156,7 @@ internal sealed class Bootstrap
             this.assist,
             this.taskExecution,
             this.leisure,
+            this.bond,
             this.multiplayer,
             config.EnableExperimentalFeatures,
             config.EnableNaturalWorkAssist,
@@ -193,7 +196,7 @@ internal sealed class Bootstrap
         this.plantingMenu = new CompanionPlantingMenuCoordinator(helper, this.registry, this.commands, config, () => this.State, () => this.saveDataWritable);
         this.socialMenu = new CompanionSocialMenuCoordinator(this.projection, this.speech, () => this.State);
         this.socialEntry = new CompanionSocialEntryCoordinator(helper, monitor, this.socialMenu);
-        this.worldInteraction = new CompanionWorldInteractionCoordinator(helper, this.bodies, this.projection, this.socialMenu, () => this.State);
+        this.worldInteraction = new CompanionWorldInteractionCoordinator(helper, this.bodies, this.projection, this.socialMenu, this.multiplayer, () => this.State);
         this.multiplayer.AttachCommandHandler(this.commands.ExecuteAuthoritative);
         this.multiplayer.AttachPeerConnectedHandler(this.OnOwnerConnected);
         this.multiplayer.AttachPeerDisconnectedHandler(this.OnOwnerDisconnected);

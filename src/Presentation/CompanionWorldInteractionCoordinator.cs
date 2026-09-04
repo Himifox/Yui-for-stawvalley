@@ -11,6 +11,7 @@ internal sealed class CompanionWorldInteractionCoordinator
     private readonly CompanionBodyBinder bodies;
     private readonly CompanionProjectionCoordinator projection;
     private readonly CompanionSocialMenuCoordinator socialMenu;
+    private readonly CompanionMultiplayerCoordinator multiplayer;
     private readonly Func<LifecycleState> getLifecycle;
 
     public CompanionWorldInteractionCoordinator(
@@ -18,12 +19,14 @@ internal sealed class CompanionWorldInteractionCoordinator
         CompanionBodyBinder bodies,
         CompanionProjectionCoordinator projection,
         CompanionSocialMenuCoordinator socialMenu,
+        CompanionMultiplayerCoordinator multiplayer,
         Func<LifecycleState> getLifecycle)
     {
         this.helper = helper;
         this.bodies = bodies;
         this.projection = projection;
         this.socialMenu = socialMenu;
+        this.multiplayer = multiplayer;
         this.getLifecycle = getLifecycle;
     }
 
@@ -42,13 +45,46 @@ internal sealed class CompanionWorldInteractionCoordinator
         if (!this.TryFindTarget(mouseTarget, absolutePixels, grabTile, playerTile, out CompanionIdentity identity, out Point targetTile, out NPC? hostBody))
             return;
 
-        if (!this.socialMenu.TryOpenDialogue(identity))
-            return;
-
         this.helper.Input.Suppress(e.Button);
         Game1.player.faceDirection(FacingToward(playerTile, targetTile));
         hostBody?.faceDirection(FacingToward(targetTile, playerTile));
-        Game1.playSound("smallSelect");
+        bool owned = identity.OwnerId == Game1.player.UniqueMultiplayerID;
+        if (owned && Game1.player.ActiveObject is StardewValley.Object gift && gift.canBeGivenAsGift() && !gift.questItem.Value)
+        {
+            var fields = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["playerSlot"] = (Game1.player.CurrentToolIndex + 1).ToString(),
+                ["itemId"] = gift.QualifiedItemId,
+            };
+            NetworkCommandResult result = this.multiplayer.Submit(identity, "gift", fields);
+            if (!result.IsSuccess)
+                Game1.showRedMessage(result.Message);
+            else
+                Game1.playSound("give_gift");
+            return;
+        }
+
+        if (owned && e.Button == SButton.MouseRight)
+        {
+            NetworkCommandResult result = this.multiplayer.Submit(identity, "hug", new Dictionary<string, string>());
+            if (!result.IsSuccess)
+                Game1.showRedMessage(result.Message);
+            else
+                Game1.playSound("dwop");
+            return;
+        }
+
+        if (owned)
+        {
+            NetworkCommandResult result = this.multiplayer.Submit(identity, "talk", new Dictionary<string, string>());
+            if (!result.IsSuccess)
+            {
+                Game1.showRedMessage(result.Message);
+                return;
+            }
+        }
+        if (this.socialMenu.TryOpenDialogue(identity))
+            Game1.playSound("smallSelect");
     }
 
     private bool TryFindTarget(bool mouseTarget, Vector2 absolutePixels, Point grabTile, Point playerTile, out CompanionIdentity identity, out Point targetTile, out NPC? hostBody)
