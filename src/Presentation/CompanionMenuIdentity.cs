@@ -16,6 +16,7 @@ internal sealed record CompanionMenuIdentitySnapshot(
     bool BodyPresent,
     string LocationSummary,
     string Mode,
+    string WorkKind,
     string VitalState,
     int BondPoints,
     int HeartLevel,

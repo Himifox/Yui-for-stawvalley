@@ -238,25 +238,10 @@ internal sealed class CompanionSpeechCoordinator
 
     public string BuildInteractionLine(CompanionMenuIdentitySnapshot identity)
     {
-        string key = !identity.OwnerOnline
-            ? "speech.talk.owner-offline"
-            : identity.VitalState == CompanionVitalStates.Downed
-                ? "speech.talk.downed"
-                : identity.VitalState is CompanionVitalStates.Resting or CompanionVitalStates.Recovering
-                    ? "speech.talk.recovering"
-                    : identity.Mode == CompanionModes.Work
-                        ? "speech.talk.work"
-                        : Game1.isRaining
-                            ? "speech.talk.rain"
-                            : Game1.timeOfDay < 900
-                                ? "speech.talk.morning"
-                                : Game1.timeOfDay >= 2100
-                                    ? "speech.talk.evening"
-                                    : identity.Mode == CompanionModes.Follow
-                                        ? "speech.talk.follow"
-                                        : "speech.talk.idle";
         SpeechRuntime runtime = this.GetRuntime(identity.Identity);
         runtime.InteractionCount++;
+        IReadOnlyList<string> topics = BuildInteractionTopics(identity);
+        string key = topics[(int)((runtime.InteractionCount - 1) % (ulong)topics.Count)];
         return BoundText(this.TranslateVariant(key, identity.Identity, key, $"interaction:{runtime.InteractionCount}"));
     }
 
@@ -455,7 +440,7 @@ internal sealed class CompanionSpeechCoordinator
 
     private void ObserveAmbientSpeech()
     {
-        if (!Context.IsWorldReady || !Context.IsPlayerFree || Game1.activeClickableMenu is not null)
+        if (!Context.IsWorldReady)
             return;
         foreach (CompanionRecord record in this.registry.Active)
         {
@@ -472,6 +457,7 @@ internal sealed class CompanionSpeechCoordinator
                 + StableVariance(record.Identity, $"ambient:{this.currentTick}", AmbientIntervalVarianceTicks);
             Farmer? owner = Game1.GetPlayer(record.OwnerId, onlyOnline: true);
             if (!record.WantsBody
+                || !OwnerLifecycleGate.CanAdvance(owner)
                 || record.Vitals.State != CompanionVitalStates.Active
                 || record.Mode == CompanionModes.Work
                 || !string.IsNullOrWhiteSpace(record.ActiveTransactionId)
@@ -610,6 +596,68 @@ internal sealed class CompanionSpeechCoordinator
         "Planting" => "planting",
         _ => "generic",
     };
+
+    private static IReadOnlyList<string> BuildInteractionTopics(CompanionMenuIdentitySnapshot identity)
+    {
+        if (!identity.OwnerOnline)
+            return new[] { "speech.talk.owner-offline" };
+        if (identity.VitalState == CompanionVitalStates.Downed)
+            return new[] { "speech.talk.downed" };
+        if (identity.VitalState is CompanionVitalStates.Resting or CompanionVitalStates.Recovering)
+            return new[] { "speech.talk.recovering" };
+
+        var topics = new List<string>(8);
+        if (identity.Mode == CompanionModes.Work)
+            topics.Add(WorkTalkKey(identity.WorkKind));
+        if (Game1.isRaining)
+            topics.Add("speech.talk.rain");
+        topics.Add(Game1.currentSeason switch
+        {
+            "spring" => "speech.talk.season.spring",
+            "summer" => "speech.talk.season.summer",
+            "fall" => "speech.talk.season.fall",
+            "winter" => "speech.talk.season.winter",
+            _ => "speech.talk.idle",
+        });
+        topics.Add(LocationTalkKey(identity.LocationSummary));
+        if (Game1.timeOfDay < 900)
+            topics.Add("speech.talk.morning");
+        else if (Game1.timeOfDay >= 2100)
+            topics.Add("speech.talk.evening");
+        topics.Add(identity.HeartLevel >= 8
+            ? "speech.talk.bond.devoted"
+            : identity.HeartLevel >= 4
+                ? "speech.talk.bond.close"
+                : "speech.talk.bond.new");
+        topics.Add(identity.Mode == CompanionModes.Follow ? "speech.talk.follow" : "speech.talk.idle");
+        return topics.Distinct(StringComparer.Ordinal).ToArray();
+    }
+
+    private static string WorkTalkKey(string kind) => kind switch
+    {
+        WorkKinds.Water => "speech.talk.work.watering",
+        WorkKinds.Chop or WorkKinds.Mow => "speech.talk.work.clearing",
+        WorkKinds.Mine => "speech.talk.work.mining",
+        WorkKinds.Harvest or WorkKinds.Forage => "speech.talk.work.gathering",
+        "Fish" => "speech.talk.work.fishing",
+        "Plant" => "speech.talk.work.planting",
+        "Fight" => "speech.talk.work.combat",
+        _ => "speech.talk.work",
+    };
+
+    private static string LocationTalkKey(string location)
+    {
+        if (location.Contains("Mine", StringComparison.OrdinalIgnoreCase)
+            || location.Contains("Skull", StringComparison.OrdinalIgnoreCase)
+            || location.Contains("Volcano", StringComparison.OrdinalIgnoreCase))
+            return "speech.talk.location.mine";
+        if (location.Contains("FarmHouse", StringComparison.OrdinalIgnoreCase)
+            || location.Contains("Cabin", StringComparison.OrdinalIgnoreCase))
+            return "speech.talk.location.home";
+        if (location.Contains("Farm", StringComparison.OrdinalIgnoreCase))
+            return "speech.talk.location.farm";
+        return "speech.talk.location.away";
+    }
 
     private static string BoundText(string value)
     {
