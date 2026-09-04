@@ -507,7 +507,7 @@ internal sealed class CompanionStorageCoordinator
         transfer.LastPosition = body.Position;
         transfer.LastProgressTick = this.currentTick;
         int facing = TaskNavigationService.FacingToward(transfer.ApproachTile, transfer.Tile);
-        body.controller = new PathFindController(body, transfer.Location, transfer.ApproachTile.ToPoint(), facing, null, SearchLimit);
+        body.controller = CompanionPathing.CreateController(body, transfer.Location, transfer.ApproachTile.ToPoint(), facing, SearchLimit);
     }
 
     private void RequestTransferLocks(StorageTransfer transfer)

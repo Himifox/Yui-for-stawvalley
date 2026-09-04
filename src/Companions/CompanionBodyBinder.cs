@@ -56,6 +56,9 @@ internal sealed class CompanionBodyBinder
             AllowDynamicAppearance = false,
             IsInvisible = true,
             HideShadow = true,
+            // Yui is a companion, not a solid villager obstacle. This keeps narrow paths,
+            // doors, beds, and seat approach tiles usable while she follows the player.
+            farmerPassesThrough = true,
         };
         Vector2? spawnTile = FindSpawnTile(owner.currentLocation, owner.Tile, body);
         if (spawnTile is null)

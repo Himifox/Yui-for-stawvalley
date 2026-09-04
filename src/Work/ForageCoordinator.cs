@@ -125,7 +125,7 @@ internal sealed class ForageCoordinator
         }
         if (!progress.CanIssuePath)
             return;
-        body.controller = new PathFindController(body, task.Location, task.ApproachTile.ToPoint(), task.Facing, null, PathSearchLimit);
+        body.controller = CompanionPathing.CreateController(body, task.Location, task.ApproachTile.ToPoint(), task.Facing, PathSearchLimit);
         task.Session.MarkTraveling();
         this.navigation.MarkPathIssued(task.Navigation, body.Position, tick, RepathDelayTicks);
     }

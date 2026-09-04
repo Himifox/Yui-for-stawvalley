@@ -6,6 +6,23 @@ namespace YuiToIssho;
 
 internal static class CompanionPathing
 {
+    public static PathFindController CreateController(
+        NPC body,
+        GameLocation location,
+        Point destination,
+        int facing,
+        int pathSearchLimit)
+    {
+        var controller = new PathFindController(body, location, destination, facing, null, pathSearchLimit)
+        {
+            // The vanilla controller otherwise uses its destructive route mode for
+            // ad-hoc NPC movement. Companions may open gates and warp, but must never
+            // alter terrain or objects simply to reach their owner or a task target.
+            nonDestructivePathing = true,
+        };
+        return controller;
+    }
+
     public static bool IsStandable(NPC body, GameLocation location, Vector2 tile)
     {
         if (!location.isTileOnMap(tile))
@@ -35,7 +52,7 @@ internal static class CompanionPathing
         if (body.TilePoint == destination.ToPoint())
             return true;
 
-        var probe = new PathFindController(body, location, destination.ToPoint(), facing, null, pathSearchLimit);
+        PathFindController probe = CreateController(body, location, destination.ToPoint(), facing, pathSearchLimit);
         return probe.pathToEndPoint is { Count: > 0 };
     }
 }

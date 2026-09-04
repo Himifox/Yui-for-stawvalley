@@ -189,7 +189,7 @@ internal sealed class FishingCoordinator
             return;
         }
 
-        body.controller = new PathFindController(body, task.Location, task.ApproachTile.ToPoint(), FacingToward(task.ApproachTile, task.WaterTile), null, PathSearchLimit);
+        body.controller = CompanionPathing.CreateController(body, task.Location, task.ApproachTile.ToPoint(), FacingToward(task.ApproachTile, task.WaterTile), PathSearchLimit);
         task.NextPathTick = tick + RepathDelayTicks;
     }
 

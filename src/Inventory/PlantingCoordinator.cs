@@ -338,7 +338,7 @@ internal sealed class PlantingCoordinator
             return;
         }
         runtime.NextPathTick = this.currentTick + RepathDelayTicks;
-        body.controller = new PathFindController(body, access.Location, access.ApproachTile.ToPoint(), TaskNavigationService.FacingToward(access.ApproachTile, access.Tile), null, PathSearchLimit);
+        body.controller = CompanionPathing.CreateController(body, access.Location, access.ApproachTile.ToPoint(), TaskNavigationService.FacingToward(access.ApproachTile, access.Tile), PathSearchLimit);
     }
 
     private void RequestChestAcquisition(PlantingRuntime runtime, PlantingRuntimeSource source, CraftChestAccess access)
@@ -506,7 +506,7 @@ internal sealed class PlantingCoordinator
         }
         if (!progress.CanIssuePath)
             return;
-        body.controller = new PathFindController(body, task.Location, task.ApproachTile.ToPoint(), task.Facing, null, PathSearchLimit);
+        body.controller = CompanionPathing.CreateController(body, task.Location, task.ApproachTile.ToPoint(), task.Facing, PathSearchLimit);
         task.Session.MarkTraveling();
         runtime.Transaction.CurrentStep!.Phase = PlantingStepPhases.Navigating;
         this.navigation.MarkPathIssued(task.Navigation, body.Position, this.currentTick, RepathDelayTicks);
@@ -681,7 +681,7 @@ internal sealed class PlantingCoordinator
                 if (runtime.PathAttempts++ < MaximumPathAttempts)
                 {
                     runtime.NextPathTick = this.currentTick + RepathDelayTicks;
-                    body.controller = new PathFindController(body, access.Location, access.ApproachTile.ToPoint(), TaskNavigationService.FacingToward(access.ApproachTile, access.Tile), null, PathSearchLimit);
+                    body.controller = CompanionPathing.CreateController(body, access.Location, access.ApproachTile.ToPoint(), TaskNavigationService.FacingToward(access.ApproachTile, access.Tile), PathSearchLimit);
                     return;
                 }
                 source.ReturnToBag = true;

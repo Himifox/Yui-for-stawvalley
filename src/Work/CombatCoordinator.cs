@@ -439,7 +439,7 @@ internal sealed class CombatCoordinator
         }
 
         int facing = FacingToward(attackTile.Value * Game1.tileSize, Center(task.Target.GetBoundingBox()));
-        body.controller = new PathFindController(body, task.Location, attackTile.Value.ToPoint(), facing, null, PathSearchLimit);
+        body.controller = CompanionPathing.CreateController(body, task.Location, attackTile.Value.ToPoint(), facing, PathSearchLimit);
         task.NextPathTick = tick + RepathDelayTicks;
     }
 

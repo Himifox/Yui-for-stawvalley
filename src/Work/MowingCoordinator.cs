@@ -183,12 +183,11 @@ internal sealed class MowingCoordinator
             return;
         }
 
-        body.controller = new PathFindController(
+        body.controller = CompanionPathing.CreateController(
             body,
             task.Location,
             task.ApproachTile.ToPoint(),
             task.Facing,
-            null,
             PathSearchLimit
         );
         task.Session.MarkTraveling();

@@ -496,7 +496,7 @@ internal sealed class CraftingCoordinator
         }
         session.NextPathTick = this.currentTick + 60;
         int facing = TaskNavigationService.FacingToward(access.ApproachTile, access.Tile);
-        body.controller = new PathFindController(body, access.Location, access.ApproachTile.ToPoint(), facing, null, 256);
+        body.controller = CompanionPathing.CreateController(body, access.Location, access.ApproachTile.ToPoint(), facing, 256);
     }
 
     private void RequestChestLocks(ChestCraftSession session, CraftChestAccess access)

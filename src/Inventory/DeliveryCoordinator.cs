@@ -216,7 +216,7 @@ internal sealed class DeliveryCoordinator
             this.Fail(task, "DELIVERY-NO-APPROACH", "No open handoff tile exists near the recipient; cargo remains in Escrow.", tick);
             return;
         }
-        body.controller = new PathFindController(body, task.Location, approach.Value.ToPoint(), FacingToward(approach.Value, task.Recipient.Tile), null, PathSearchLimit);
+        body.controller = CompanionPathing.CreateController(body, task.Location, approach.Value.ToPoint(), FacingToward(approach.Value, task.Recipient.Tile), PathSearchLimit);
         task.Session.MarkTraveling();
         this.navigation.MarkPathIssued(task.Navigation, body.Position, tick, RepathDelayTicks);
     }

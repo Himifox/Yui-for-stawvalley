@@ -702,7 +702,7 @@ internal sealed class CompanionVitalsCoordinator
             record.Vitals.LastFailure = emergency ? "EMERGENCY-RETREAT-BLOCKED: no open adjacent tile." : "RETREAT-BLOCKED: no open adjacent tile.";
             return;
         }
-        body.controller = new PathFindController(body, body.currentLocation, destination.Value.ToPoint(), body.FacingDirection, null, RetreatPathLimit);
+        body.controller = CompanionPathing.CreateController(body, body.currentLocation, destination.Value.ToPoint(), body.FacingDirection, RetreatPathLimit);
     }
 
     private void EnterDowned(CompanionRecord record, string reason)

@@ -38,14 +38,13 @@ internal static class SeatInteractionPatch
     {
         try
         {
-            Func<MapSeat, NPC, bool>? predicate = isSeatedCompanion;
-            if (predicate is null)
+            if (isSeatedCompanion is null)
                 return true;
 
             IReadOnlyList<NPC> characters = Game1.CurrentEvent is not null
                 ? Game1.CurrentEvent.actors
                 : location.characters.ToList();
-            if (!characters.Any(character => predicate(__instance, character)))
+            if (!characters.Any(IsCompanionBody))
                 return true;
 
             Rectangle seatBounds = __instance.GetSeatBounds();
@@ -64,7 +63,10 @@ internal static class SeatInteractionPatch
 
             foreach (NPC character in characters)
             {
-                if (predicate(__instance, character))
+                // Ignore every tagged Yui body, including one still walking onto the
+                // approach tile. Vanilla otherwise ejects a seated player before Yui
+                // reaches the shared seat.
+                if (IsCompanionBody(character))
                     continue;
                 Rectangle bodyBounds = character.GetBoundingBox();
                 if (bodyBounds.Intersects(seatBounds)
@@ -82,4 +84,7 @@ internal static class SeatInteractionPatch
             return true;
         }
     }
+
+    private static bool IsCompanionBody(NPC character) =>
+        CompanionBodyBinder.TryReadIdentity(character, out _, out _);
 }

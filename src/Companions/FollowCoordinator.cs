@@ -163,12 +163,11 @@ internal sealed class FollowCoordinator
             return;
         }
 
-        var controller = new PathFindController(
+        PathFindController controller = CompanionPathing.CreateController(
             body,
             owner.currentLocation,
             target.Value.ToPoint(),
             owner.FacingDirection,
-            null,
             PathSearchLimit
         );
         if (controller.pathToEndPoint is not { Count: > 0 })

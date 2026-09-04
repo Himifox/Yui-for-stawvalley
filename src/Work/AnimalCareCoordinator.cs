@@ -178,7 +178,7 @@ internal sealed class AnimalCareCoordinator
             return;
         }
 
-        body.controller = new PathFindController(body, task.Location, approach.Value.ToPoint(), FacingToward(approach.Value, targetTile), null, PathSearchLimit);
+        body.controller = CompanionPathing.CreateController(body, task.Location, approach.Value.ToPoint(), FacingToward(approach.Value, targetTile), PathSearchLimit);
         task.Session.MarkTraveling();
         this.navigation.MarkPathIssued(task.Navigation, body.Position, tick, RepathDelayTicks);
     }

@@ -240,7 +240,7 @@ internal sealed class CompanionLeisureCoordinator
         }
         if (!progress.CanIssuePath)
             return;
-        body.controller = new PathFindController(body, state.Location, state.ApproachTile.ToPoint(), state.Facing, null, PathSearchLimit);
+        body.controller = CompanionPathing.CreateController(body, state.Location, state.ApproachTile.ToPoint(), state.Facing, PathSearchLimit);
         this.navigation.MarkPathIssued(state.Navigation, body.Position, tick, RepathDelayTicks);
     }
 
