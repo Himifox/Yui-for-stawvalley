@@ -330,7 +330,8 @@ internal sealed class CompanionStorageCoordinator
         this.currentTick = tick;
         this.ObserveBorrowedTools();
         foreach (StorageTransfer transfer in this.transfers.Values.ToArray())
-            this.UpdateTransfer(transfer);
+            if (OwnerLifecycleGate.CanAdvance(transfer.Identity))
+                this.UpdateTransfer(transfer);
     }
 
     public void CancelRuntime(string code)
@@ -966,12 +967,10 @@ internal sealed class CompanionStorageCoordinator
     private bool CanCommit(CompanionIdentity identity, CompanionRecord record) =>
         Context.IsWorldReady
         && Context.IsMainPlayer
-        && Context.IsPlayerFree
-        && Game1.activeClickableMenu is null
         && this.getLifecycleState() == LifecycleState.SaveReady
         && this.canMutateSave()
         && record.OwnerId == identity.OwnerId
-        && Game1.GetPlayer(identity.OwnerId, onlyOnline: true) is not null;
+        && OwnerLifecycleGate.CanAdvance(identity);
 
     private bool IsCurrent(StorageTransfer transfer) =>
         this.transfers.TryGetValue(transfer.Identity, out StorageTransfer? current)

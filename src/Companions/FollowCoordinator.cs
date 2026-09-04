@@ -49,7 +49,7 @@ internal sealed class FollowCoordinator
         foreach (CompanionRecord record in active)
         {
             Farmer? owner = Game1.GetPlayer(record.OwnerId, onlyOnline: true);
-            if (owner?.IsLocalPlayer == true && !Context.IsPlayerFree)
+            if (!OwnerLifecycleGate.CanAdvance(owner))
             {
                 this.bodies.Halt(record.Identity);
                 continue;

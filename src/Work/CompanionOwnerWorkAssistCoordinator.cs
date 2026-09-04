@@ -157,7 +157,11 @@ internal sealed class CompanionOwnerWorkAssistCoordinator
     {
         CompanionRecord[] enabled = this.registry.Active.Where(record => record.OwnerWorkAssistEnabled).ToArray();
         foreach (CompanionRecord record in enabled)
-            this.UpdateOne(record, tick);
+        {
+            Farmer? owner = Game1.GetPlayer(record.OwnerId, onlyOnline: true);
+            if (OwnerLifecycleGate.CanObserve(owner))
+                this.UpdateOne(record, tick);
+        }
 
         HashSet<CompanionIdentity> active = enabled.Select(record => record.Identity).ToHashSet();
         foreach (CompanionIdentity stale in this.runtimes.Keys.Where(identity => !active.Contains(identity)).ToArray())

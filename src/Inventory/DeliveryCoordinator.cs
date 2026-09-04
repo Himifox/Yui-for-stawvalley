@@ -40,11 +40,14 @@ internal sealed class DeliveryCoordinator
     {
         this.currentTick = tick;
         foreach (DeliveryTask task in this.tasks.Values.ToArray())
-            this.UpdateOne(task, tick);
+            if (OwnerLifecycleGate.CanAdvance(task.Session.Identity))
+                this.UpdateOne(task, tick);
         if (tick % 60 != 0)
             return;
         foreach (CompanionRecord record in this.registry.Active)
         {
+            if (!OwnerLifecycleGate.CanAdvance(record.Identity))
+                continue;
             this.NormalizeRetryClock(record, tick);
             this.TryReturnPending(record, tick);
             this.TryActivate(record, tick);
@@ -252,6 +255,7 @@ internal sealed class DeliveryCoordinator
     private InventoryActionResult SettleLocked(DeliveryTask task)
     {
         if (!this.execution.IsCurrent(task.Session)
+            || !OwnerLifecycleGate.CanAdvance(task.Session.Identity)
             || !this.bodies.TryGetBody(task.Session.Identity, out NPC body)
             || body.currentLocation is null
             || !ReferenceEquals(body.currentLocation, task.Recipient.currentLocation)

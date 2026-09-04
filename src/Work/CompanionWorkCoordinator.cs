@@ -393,6 +393,12 @@ internal sealed class CompanionWorkCoordinator
             state.LastReason = directive.SuspendedReason;
             return;
         }
+        if (!OwnerLifecycleGate.CanAdvance(owner))
+        {
+            state.Phase = "Paused";
+            state.LastReason = "OWNER-BUSY";
+            return;
+        }
         if (!ReferenceEquals(owner.currentLocation, body.currentLocation))
         {
             this.Stop(record.Identity, "OWNER-LEFT-WORK-LOCATION", useReturnMode: true);

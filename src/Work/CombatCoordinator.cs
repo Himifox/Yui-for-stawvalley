@@ -364,6 +364,8 @@ internal sealed class CombatCoordinator
 
     private void UpdateOne(CombatTask task, ulong tick)
     {
+        if (!OwnerLifecycleGate.CanAdvance(task.Owner))
+            return;
         if (!this.execution.IsCurrent(task.Session))
         {
             this.execution.AbandonRuntime(task.Session);
@@ -708,6 +710,8 @@ internal sealed class CombatCoordinator
     private void UpdateGuard(GuardDirective guard)
     {
         if (!this.guards.ContainsKey(guard.Identity) || this.tasks.ContainsKey(guard.Identity))
+            return;
+        if (!OwnerLifecycleGate.CanAdvance(guard.Owner))
             return;
         if (this.hostTick >= guard.ExpiresAtTick || guard.CommittedSwings >= guard.MaximumSwings)
         {

@@ -1,4 +1,5 @@
 using Microsoft.Xna.Framework;
+using StardewModdingAPI;
 using StardewValley;
 
 namespace YuiToIssho;
@@ -50,7 +51,7 @@ internal sealed class OwnerContextLease : IDisposable
         return lease;
     }
 
-    public static bool CanProject(Farmer owner) => owner.CanMove && !owner.UsingTool;
+    public static bool CanProject(Farmer owner) => OwnerLifecycleGate.CanAdvance(owner);
 
     public void Dispose()
     {
@@ -78,4 +79,21 @@ internal sealed class OwnerContextLease : IDisposable
         this.owner.FarmerSprite.currentSingleAnimation = this.originalSingleAnimation;
         this.owner.FarmerSprite.PauseForSingleAnimation = this.originalPauseForSingleAnimation;
     }
+}
+
+/// <summary>Evaluates one Farmer's lifecycle without borrowing the host player's local UI state.</summary>
+internal static class OwnerLifecycleGate
+{
+    public static bool CanAdvance(CompanionIdentity identity) =>
+        CanAdvance(Game1.GetPlayer(identity.OwnerId, onlyOnline: true));
+
+    public static bool CanAdvance(Farmer? owner) =>
+        owner?.currentLocation is not null
+        && owner.CanMove
+        && !owner.UsingTool
+        && (!owner.IsLocalPlayer || (Context.IsPlayerFree && Game1.activeClickableMenu is null));
+
+    public static bool CanObserve(Farmer? owner) =>
+        owner?.currentLocation is not null
+        && (!owner.IsLocalPlayer || (!Game1.eventUp && Game1.activeClickableMenu is null));
 }

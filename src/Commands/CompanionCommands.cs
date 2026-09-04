@@ -328,9 +328,6 @@ internal sealed class CompanionCommands
             return NetworkCommandResult.Failure("EXPERIMENTAL-FEATURE-DISABLED", "The host has not enabled experimental commands.");
         bool readOnlyRequest = request.Command is "assist-status" or "work-status" or "craft-list" or "craft-preview" or "craft-status" or "plant-options" or "plant-preview" or "plant-status" or "operation-status";
         bool socialRequest = request.Command is "talk" or "hug" or "gift";
-        bool craftMenuRequest = request.Command.StartsWith("craft-", StringComparison.Ordinal) && Game1.activeClickableMenu is CompanionCraftingMenu;
-        if ((!Context.IsPlayerFree || Game1.activeClickableMenu is not null) && !craftMenuRequest && !readOnlyRequest && !socialRequest)
-            return NetworkCommandResult.Failure("PLAYER-BUSY", "The host lifecycle is not free for a new authoritative request.");
         if (request.Identity.OwnerId != request.SenderPlayerId)
             return NetworkCommandResult.Failure("NOT-OWNER", "The sender does not own the requested companion.");
         if (!request.Identity.IsCanonical)
@@ -338,6 +335,11 @@ internal sealed class CompanionCommands
         Farmer? owner = Game1.GetPlayer(request.SenderPlayerId, onlyOnline: true);
         if (owner is null || owner.UniqueMultiplayerID != request.Identity.OwnerId)
             return NetworkCommandResult.Failure("OWNER-OFFLINE", "The exact Owner Farmer is not online on the host.");
+        bool craftMenuRequest = request.Command.StartsWith("craft-", StringComparison.Ordinal)
+            && owner.IsLocalPlayer
+            && Game1.activeClickableMenu is CompanionCraftingMenu;
+        if (!OwnerLifecycleGate.CanAdvance(owner) && !craftMenuRequest && !readOnlyRequest && !socialRequest)
+            return NetworkCommandResult.Failure("PLAYER-BUSY", "This Yui's Owner lifecycle is not free for a new authoritative request.");
 
         string[] coordinatorArgs = BuildCoordinatorArgs(request);
         if (IsAgentMutation(request.Command))
@@ -551,8 +553,8 @@ internal sealed class CompanionCommands
                     return InventoryActionResult.Failure("IDENTITY-NOT-FOUND", $"{identity} no longer exists.");
                 if (!string.IsNullOrWhiteSpace(currentRecord.ActiveTransactionId))
                     return InventoryActionResult.Failure("COMPANION-BUSY", $"{identity} must finish or stop transaction {currentRecord.ActiveTransactionId} before moving items.");
-                if (Game1.activeClickableMenu is not null || !Context.IsPlayerFree)
-                    return InventoryActionResult.Failure("PLAYER-BUSY", "Close menus and return player control before moving real items.");
+                if (!OwnerLifecycleGate.CanAdvance(owner))
+                    return InventoryActionResult.Failure("PLAYER-BUSY", "This Yui's Owner must return to free control before moving real items.");
 
                 return operation == "give"
                     ? this.inventories.TryGive(identity, owner, oneBasedSlot)

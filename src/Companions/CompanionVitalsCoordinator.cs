@@ -412,6 +412,8 @@ internal sealed class CompanionVitalsCoordinator
 
         foreach (CompanionRecord record in this.registry.Active.ToArray())
         {
+            if (!OwnerLifecycleGate.CanAdvance(record.Identity))
+                continue;
             CompanionVitalsRecord vitals = record.Vitals;
             bool recoveryState = vitals.State is CompanionVitalStates.Downed or CompanionVitalStates.Recovering;
             if (vitals.LastNormalizedDay < day && (!recoveryState || day >= vitals.RecoveryDay))
@@ -861,12 +863,10 @@ internal sealed class CompanionVitalsCoordinator
     private bool CanMutate(CompanionIdentity identity, CompanionRecord record) =>
         Context.IsWorldReady
         && Context.IsMainPlayer
-        && Context.IsPlayerFree
-        && Game1.activeClickableMenu is null
         && this.getLifecycleState() == LifecycleState.SaveReady
         && this.canMutateSave()
         && record.OwnerId == identity.OwnerId
-        && Game1.GetPlayer(identity.OwnerId, onlyOnline: true) is not null;
+        && OwnerLifecycleGate.CanAdvance(identity);
 
     private static int FindFoodIndex(IList<Item> bag)
     {

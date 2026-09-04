@@ -114,6 +114,8 @@ internal sealed class ChoppingCoordinator
 
     private void UpdateOne(ChopTask task, ulong tick)
     {
+        if (!OwnerLifecycleGate.CanAdvance(task.Owner))
+            return;
         if (!this.execution.IsCurrent(task.Session))
         {
             this.execution.AbandonRuntime(task.Session);

@@ -115,6 +115,8 @@ internal sealed class AnimalCareCoordinator
 
     private void UpdateOne(CareTask task, ulong tick)
     {
+        if (!OwnerLifecycleGate.CanAdvance(task.Owner))
+            return;
         if (!this.execution.IsCurrent(task.Session))
         {
             this.execution.AbandonRuntime(task.Session);

@@ -133,6 +133,8 @@ internal sealed class HarvestCoordinator
 
     private void UpdateOne(HarvestTask task, ulong tick)
     {
+        if (!OwnerLifecycleGate.CanAdvance(task.Owner))
+            return;
         if (!this.execution.IsCurrent(task.Session))
         {
             this.execution.AbandonRuntime(task.Session);
@@ -197,7 +199,7 @@ internal sealed class HarvestCoordinator
 
     private void Settle(HarvestTask task)
     {
-        if (!OwnerContextLease.CanProject(Game1.player))
+        if (!OwnerContextLease.CanProject(task.Owner))
             return;
         if (!task.Session.TryEnterSettlement())
             return;
@@ -223,8 +225,8 @@ internal sealed class HarvestCoordinator
             return InventoryActionResult.Failure("TARGET-CHANGED", "The exact mature crop changed while the bag lock was pending.");
         if (!this.bodies.TryGetBody(task.Identity, out NPC body))
             return InventoryActionResult.Failure("BODY-INVALID", "The companion body disappeared while the bag lock was pending.");
-        if (!OwnerContextLease.CanProject(Game1.player))
-            return InventoryActionResult.Failure("OWNER-BUSY", "The local engine recipient started another action while harvest was waiting for the bag lock; the crop remains unchanged.");
+        if (!OwnerLifecycleGate.CanAdvance(task.Owner))
+            return InventoryActionResult.Failure("OWNER-BUSY", "This Yui's Owner started another action while harvest was waiting for the bag lock; the crop remains unchanged.");
         if (task.Method == HarvestMethod.Scythe && (task.Scythe is null || !this.inventories.ContainsExact(task.Identity, task.Scythe)))
             return InventoryActionResult.Failure("TOOL-RESPONSIBILITY-LOST", "The exact scythe changed while the bag lock was pending.");
 

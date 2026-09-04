@@ -494,23 +494,18 @@ internal sealed class Bootstrap
                     this.assist.Update(this.SessionTick);
                     this.leisure.Update(this.registry.Active, this.SessionTick);
                 }
-                if (Context.IsPlayerFree)
-                {
-                    this.vitals.Update(this.SessionTick);
-                    this.workRuntime.Update(this.SessionTick);
-                    this.storage.Update(this.SessionTick);
-                    this.crafting.Update(this.SessionTick);
-                    this.planting.Update(this.SessionTick);
-                    AgentScheduleDecision schedule = this.agents.Update(this.SessionTick);
-                    if (schedule.AdvanceWork)
-                        this.work.Update(this.SessionTick);
-                    if (schedule.AdvanceFollow)
-                        this.following.Update(this.registry.Active, this.SessionTick);
-                    if (this.SessionTick % 60 == 0)
-                        this.DrainPendingOutputs();
-                }
-                else
+                this.vitals.Update(this.SessionTick);
+                this.workRuntime.Update(this.SessionTick);
+                this.storage.Update(this.SessionTick);
+                this.crafting.Update(this.SessionTick);
+                this.planting.Update(this.SessionTick);
+                AgentScheduleDecision schedule = this.agents.Update(this.SessionTick);
+                if (schedule.AdvanceWork)
+                    this.work.Update(this.SessionTick);
+                if (schedule.AdvanceFollow || this.registry.Active.Any(record => !OwnerLifecycleGate.CanAdvance(record.Identity)))
                     this.following.Update(this.registry.Active, this.SessionTick);
+                if (this.SessionTick % 60 == 0)
+                    this.DrainPendingOutputs();
             }
             if (e.IsMultipleOf(6))
             {
@@ -655,7 +650,8 @@ internal sealed class Bootstrap
         foreach (CompanionRecord record in this.registry.Active)
         {
             CompanionIdentity identity = record.Identity;
-            if (record.ActiveTransactionId is not null
+            if (!OwnerLifecycleGate.CanAdvance(identity)
+                || record.ActiveTransactionId is not null
                 || (this.inventories.PendingOutputCount(identity) == 0 && this.inventories.RecoveryVaultCount(identity) == 0)
                 || this.inventories.Count(identity) >= CompanionInventoryStore.Capacity
                 || !this.pendingOutputDrains.Add(identity))

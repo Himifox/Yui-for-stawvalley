@@ -203,6 +203,8 @@ internal sealed class PlantingCoordinator
                 this.DropRuntime(runtime);
                 continue;
             }
+            if (!OwnerLifecycleGate.CanAdvance(runtime.Owner))
+                continue;
             if (runtime.Transaction.Phase is PlantingPhases.ReturningSeeds or PlantingPhases.Cancelling)
                 this.UpdateReturning(runtime);
             else if (runtime.Transaction.SourcePlan.Any(source => source.AcquiredQuantity < source.Quantity))
@@ -268,6 +270,8 @@ internal sealed class PlantingCoordinator
         {
             if (!this.IsCurrent(runtime))
                 return InventoryActionResult.Failure("PLANT-TRANSACTION-STALE", "Planting changed before bag acquisition.");
+            if (!OwnerLifecycleGate.CanAdvance(runtime.Owner))
+                return InventoryActionResult.Failure("OWNER-BUSY", "This Yui's Owner became busy before seed acquisition.");
             try
             {
                 foreach (PlantingRuntimeSource source in runtime.Sources
@@ -288,7 +292,7 @@ internal sealed class PlantingCoordinator
             if (!this.IsCurrent(runtime))
                 return;
             runtime.BagAcquired = result.IsSuccess;
-            if (!result.IsSuccess)
+            if (!result.IsSuccess && result.Code != "OWNER-BUSY")
                 this.BeginReturning(runtime, result.Code);
         });
     }
@@ -353,7 +357,9 @@ internal sealed class PlantingCoordinator
                 string? failure = null;
                 try
                 {
-                    if (!this.IsCurrent(runtime) || !CompanionStorageCoordinator.IsCurrentCraftChest(access, runtime.Identity.OwnerId))
+                    if (!OwnerLifecycleGate.CanAdvance(runtime.Owner))
+                        failure = "OWNER-BUSY";
+                    else if (!this.IsCurrent(runtime) || !CompanionStorageCoordinator.IsCurrentCraftChest(access, runtime.Identity.OwnerId))
                         failure = "PLANT-CHEST-SOURCE-CHANGED";
                     else
                         MoveToEscrow(runtime.Transaction.PlantingId, source, this.inventories.GetPlantEscrow(runtime.Identity));
@@ -368,7 +374,7 @@ internal sealed class PlantingCoordinator
                     bagMutex.ReleaseLock();
                     chestMutex.ReleaseLock();
                 }
-                if (failure is not null)
+                if (failure is not null && failure != "OWNER-BUSY")
                     this.BeginReturning(runtime, failure);
                 else
                     runtime.PathAttempts = 0;

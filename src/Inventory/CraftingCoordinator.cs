@@ -149,9 +149,11 @@ internal sealed class CraftingCoordinator
     {
         this.currentTick = tick;
         foreach (ChestCraftSession session in this.chestSessions.Values.ToArray())
-            this.UpdateChestSession(session);
+            if (OwnerLifecycleGate.CanAdvance(session.Owner))
+                this.UpdateChestSession(session);
         foreach (CompanionRecord record in this.registry.All.Where(record => record.CraftTransaction is not null && !this.chestSessions.ContainsKey(record.Identity)).ToArray())
-            this.TryReconcilePersistedOutput(record);
+            if (OwnerLifecycleGate.CanAdvance(record.Identity))
+                this.TryReconcilePersistedOutput(record);
     }
 
     public void RestoreAfterLoad()
@@ -236,6 +238,8 @@ internal sealed class CraftingCoordinator
     private CraftActionResult CommitSingleBagCraft(CompanionRecord record, Farmer owner, CraftRecipeDescriptor recipe, CraftTransactionRecord transaction)
     {
         CompanionIdentity identity = record.Identity;
+        if (!OwnerLifecycleGate.CanAdvance(owner))
+            return CraftActionResult.Failure("OWNER-BUSY", "This Yui's Owner became busy before the bag lock was acquired; materials were unchanged.");
         if (record.CraftTransaction is not null || !string.IsNullOrWhiteSpace(record.ActiveTransactionId))
             return CraftActionResult.Failure("COMPANION-BUSY", "The companion acquired another transaction before the bag lock.");
         Inventory bag = this.inventories.Get(identity);
@@ -459,6 +463,11 @@ internal sealed class CraftingCoordinator
                     return new InventoryActionResult(result.IsSuccess, result.Code, result.Message);
                 }, result =>
                 {
+                    if (result.Code == "OWNER-BUSY" && this.chestSessions.ContainsKey(session.Record.Identity))
+                    {
+                        session.CommitRequested = false;
+                        return;
+                    }
                     if (!result.IsSuccess)
                         this.monitor.Log($"HY-CRAFT-{result.Code}: {session.Record.Identity} {result.Message}", LogLevel.Warn);
                     this.chestSessions.Remove(session.Record.Identity);
@@ -510,6 +519,11 @@ internal sealed class CraftingCoordinator
             {
                 try
                 {
+                    if (!OwnerLifecycleGate.CanAdvance(session.Owner))
+                    {
+                        session.LockRequested = false;
+                        return;
+                    }
                     if (!this.chestSessions.ContainsKey(session.Record.Identity) || !CompanionStorageCoordinator.IsCurrentCraftChest(access, session.Record.OwnerId))
                         return;
                     Inventory escrow = this.inventories.GetCraftEscrow(session.Record.Identity);
@@ -541,6 +555,8 @@ internal sealed class CraftingCoordinator
 
     private CraftActionResult CommitEscrowed(ChestCraftSession session)
     {
+        if (!OwnerLifecycleGate.CanAdvance(session.Owner))
+            return CraftActionResult.Failure("OWNER-BUSY", "This Yui's Owner became busy before output creation; escrowed materials remain unchanged.");
         CraftTransactionRecord transaction = session.Transaction;
         Inventory escrow = this.inventories.GetCraftEscrow(session.Record.Identity);
         Item[] responsible = escrow.Where(item => item is not null && item.modData.GetValueOrDefault(CompanionInventoryStore.CraftIdTag) == transaction.CraftId).ToArray();

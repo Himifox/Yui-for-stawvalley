@@ -115,7 +115,9 @@ internal sealed class AgentRuntimeCoordinator
         IReadOnlyList<AgentRuntime> selected = this.SelectRuntimeBudget();
         foreach (AgentRuntime runtime in selected)
         {
-            if (tick < runtime.NextEligibleTick || !this.registry.TryGet(runtime.Identity, out CompanionRecord record))
+            if (tick < runtime.NextEligibleTick
+                || !OwnerLifecycleGate.CanAdvance(runtime.Identity)
+                || !this.registry.TryGet(runtime.Identity, out CompanionRecord record))
                 continue;
             try
             {
@@ -271,7 +273,12 @@ internal sealed class AgentRuntimeCoordinator
         this.Synchronize();
         if (this.suspended || this.runtimes.Count == 0)
             return Array.Empty<AgentRuntime>();
-        AgentRuntime[] ordered = this.runtimes.Values.OrderBy(runtime => runtime.Identity.OwnerId).ToArray();
+        AgentRuntime[] ordered = this.runtimes.Values
+            .Where(runtime => OwnerLifecycleGate.CanAdvance(runtime.Identity))
+            .OrderBy(runtime => runtime.Identity.OwnerId)
+            .ToArray();
+        if (ordered.Length == 0)
+            return Array.Empty<AgentRuntime>();
         int count = Math.Min(RuntimeBudgetPerTick, ordered.Length);
         var selected = new List<AgentRuntime>(count);
         for (int offset = 0; offset < count; offset++)
