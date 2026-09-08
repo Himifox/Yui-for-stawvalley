@@ -93,17 +93,19 @@ internal sealed class CompanionSpeechCoordinator
     private readonly ITranslationHelper translation;
     private readonly CompanionRegistry registry;
     private readonly CompanionBodyBinder bodies;
+    private readonly CompanionLeisureCoordinator leisure;
     private readonly CompanionMultiplayerCoordinator multiplayer;
     private readonly IMonitor monitor;
     private readonly Dictionary<CompanionIdentity, SpeechRuntime> runtimes = new();
     private ulong currentTick;
     private string clientEpoch = string.Empty;
 
-    public CompanionSpeechCoordinator(IModHelper helper, CompanionRegistry registry, CompanionBodyBinder bodies, CompanionMultiplayerCoordinator multiplayer, IMonitor monitor)
+    public CompanionSpeechCoordinator(IModHelper helper, CompanionRegistry registry, CompanionBodyBinder bodies, CompanionLeisureCoordinator leisure, CompanionMultiplayerCoordinator multiplayer, IMonitor monitor)
     {
         this.translation = helper.Translation;
         this.registry = registry;
         this.bodies = bodies;
+        this.leisure = leisure;
         this.multiplayer = multiplayer;
         this.monitor = monitor;
     }
@@ -468,17 +470,9 @@ internal sealed class CompanionSpeechCoordinator
                 || !ReferenceEquals(owner.currentLocation, body.currentLocation)
                 || Math.Max(Math.Abs(owner.TilePoint.X - body.TilePoint.X), Math.Abs(owner.TilePoint.Y - body.TilePoint.Y)) > AmbientMaximumTileDistance)
                 continue;
-            string key = Game1.isRaining
-                ? "speech.ambient.rain"
-                : Game1.timeOfDay < 900
-                    ? "speech.ambient.morning"
-                    : Game1.timeOfDay >= 2100
-                        ? "speech.ambient.evening"
-                        : record.Mode == CompanionModes.Follow
-                            ? "speech.ambient.follow"
-                            : record.Mode == CompanionModes.Wait
-                                ? "speech.ambient.wait"
-                                : "speech.ambient.idle";
+            IReadOnlyList<string> topics = this.BuildAmbientTopics(record, body);
+            runtime.AmbientCount++;
+            string key = topics[(int)((runtime.AmbientCount - 1) % (ulong)topics.Count)];
             this.Offer(record.Identity, key, key, SpeechPriorities.Normal, AmbientTopicCooldownTicks, $"ambient:{this.currentTick}");
         }
     }
@@ -510,17 +504,47 @@ internal sealed class CompanionSpeechCoordinator
                 bond.LastWakeDay = day;
                 this.Offer(record.Identity, "speech.moment.wake", "moment.wake", SpeechPriorities.Important, CommandCooldownTicks, $"wake:{day}");
             }
+            else if (bond.LastSeasonStartDay != day && Game1.dayOfMonth == 1 && Game1.timeOfDay < 1200 && distance <= 8)
+            {
+                bond.LastSeasonStartDay = day;
+                this.Offer(record.Identity, "speech.moment.season-start", "moment.season-start", SpeechPriorities.Important, CommandCooldownTicks, $"season-start:{day}");
+            }
+            else if (bond.LastFestivalDay != day && Utility.isFestivalDay() && Game1.timeOfDay < 1200 && distance <= 8)
+            {
+                bond.LastFestivalDay = day;
+                this.Offer(record.Identity, "speech.moment.festival", "moment.festival", SpeechPriorities.Important, CommandCooldownTicks, $"festival:{day}");
+            }
+            else if (bond.LastWeekendDay != day && Game1.dayOfMonth % 7 == 0 && Game1.timeOfDay < 1200 && distance <= 8)
+            {
+                bond.LastWeekendDay = day;
+                this.Offer(record.Identity, "speech.moment.weekend", "moment.weekend", SpeechPriorities.Normal, AmbientTopicCooldownTicks, $"weekend:{day}");
+            }
+            else if (bond.LastMiddayDay != day && Game1.timeOfDay is >= 1200 and < 1400 && distance <= 8)
+            {
+                bond.LastMiddayDay = day;
+                this.Offer(record.Identity, "speech.moment.midday", "moment.midday", SpeechPriorities.Normal, AmbientTopicCooldownTicks, $"midday:{day}");
+            }
+            else if (bond.LastSunsetDay != day && Game1.timeOfDay is >= 1700 and < 2000 && body.currentLocation.IsOutdoors && distance <= 8)
+            {
+                bond.LastSunsetDay = day;
+                this.Offer(record.Identity, "speech.moment.sunset", "moment.sunset", SpeechPriorities.Normal, AmbientTopicCooldownTicks, $"sunset:{day}");
+            }
             else if (bond.LastBedtimeDay != day && Game1.timeOfDay >= 2200 && home && distance <= 8)
             {
                 bond.LastBedtimeDay = day;
                 this.Offer(record.Identity, "speech.moment.bedtime", "moment.bedtime", SpeechPriorities.Important, CommandCooldownTicks, $"bedtime:{day}");
+            }
+            else if (bond.LastLateNightDay != day && Game1.timeOfDay >= 2400 && distance <= 8)
+            {
+                bond.LastLateNightDay = day;
+                this.Offer(record.Identity, "speech.moment.late-night", "moment.late-night", SpeechPriorities.Important, CommandCooldownTicks, $"late-night:{day}");
             }
             else if (bond.LastHomecomingDay != day && arrivedHome)
             {
                 bond.LastHomecomingDay = day;
                 this.Offer(record.Identity, "speech.moment.homecoming", "moment.homecoming", SpeechPriorities.Important, CommandCooldownTicks, $"homecoming:{day}");
             }
-            else if (bond.LastRainReactionDay != day && Game1.isRaining && body.currentLocation.IsOutdoors && distance <= 8)
+            else if (bond.LastRainReactionDay != day && Game1.IsRainingHere(body.currentLocation) && body.currentLocation.IsOutdoors && distance <= 8)
             {
                 bond.LastRainReactionDay = day;
                 this.Offer(record.Identity, "speech.moment.rain", "moment.rain", SpeechPriorities.Normal, AmbientTopicCooldownTicks, $"rain:{day}");
@@ -685,6 +709,46 @@ internal sealed class CompanionSpeechCoordinator
         return topics.Distinct(StringComparer.Ordinal).ToArray();
     }
 
+    private IReadOnlyList<string> BuildAmbientTopics(CompanionRecord record, NPC body)
+    {
+        GameLocation location = body.currentLocation;
+        var topics = new List<string>(6);
+        if (location.IsOutdoors)
+        {
+            if (Game1.IsGreenRainingHere(location))
+                topics.Add("speech.ambient.green-rain");
+            else if (Game1.isLightning && Game1.IsRainingHere(location))
+                topics.Add("speech.ambient.storm");
+            else if (Game1.isSnowing)
+                topics.Add("speech.ambient.snow");
+            else if (Game1.IsRainingHere(location))
+                topics.Add("speech.ambient.rain");
+        }
+
+        if (Game1.timeOfDay < 900)
+            topics.Add("speech.ambient.morning");
+        else if (Game1.timeOfDay >= 2100)
+            topics.Add("speech.ambient.evening");
+
+        if (this.leisure.IsActive(record.Identity))
+            topics.Add("speech.ambient.sitting");
+
+        string locationName = location.NameOrUniqueName;
+        if (IsMine(locationName))
+            topics.Add("speech.ambient.mine");
+        else if (location.IsOutdoors && locationName.Contains("Farm", StringComparison.OrdinalIgnoreCase))
+            topics.Add("speech.ambient.farm");
+        else if (!location.IsOutdoors)
+            topics.Add("speech.ambient.indoors");
+
+        topics.Add(record.Mode == CompanionModes.Follow
+            ? "speech.ambient.follow"
+            : record.Mode == CompanionModes.Wait
+                ? "speech.ambient.wait"
+                : "speech.ambient.idle");
+        return topics.Distinct(StringComparer.Ordinal).ToArray();
+    }
+
     private static string WorkTalkKey(string kind) => kind switch
     {
         WorkKinds.Water => "speech.talk.work.watering",
@@ -710,6 +774,11 @@ internal sealed class CompanionSpeechCoordinator
             return "speech.talk.location.farm";
         return "speech.talk.location.away";
     }
+
+    private static bool IsMine(string location) =>
+        location.Contains("Mine", StringComparison.OrdinalIgnoreCase)
+        || location.Contains("Skull", StringComparison.OrdinalIgnoreCase)
+        || location.Contains("Volcano", StringComparison.OrdinalIgnoreCase);
 
     private static int CurrentDay => (int)Math.Min((uint)int.MaxValue, Game1.stats.DaysPlayed);
 
@@ -794,6 +863,7 @@ internal sealed class CompanionSpeechCoordinator
     {
         public ulong LastSequence { get; set; }
         public ulong InteractionCount { get; set; }
+        public ulong AmbientCount { get; set; }
         public ulong NextAmbientTick { get; set; }
         public string LastVitalState { get; set; } = string.Empty;
         public string LastFatigueLevel { get; set; } = string.Empty;

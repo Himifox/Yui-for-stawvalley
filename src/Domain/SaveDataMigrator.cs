@@ -29,6 +29,9 @@ internal static class SaveDataMigrator
                 case 10:
                     MigrateV10ToV11(data);
                     break;
+                case 11:
+                    MigrateV11ToV12(data);
+                    break;
                 default:
                     return SaveMigrationResult.Failure("SAVE-MIGRATION-MISSING", $"No migration step exists for schema {data.SchemaVersion}.");
             }
@@ -57,5 +60,13 @@ internal static class SaveDataMigrator
         foreach (CompanionRecord record in data.Companions.Where(record => record is not null))
             record.Bond ??= new CompanionBondRecord();
         data.SchemaVersion = 11;
+    }
+
+    private static void MigrateV11ToV12(YuiToIsshoSaveData data)
+    {
+        data.Companions ??= new List<CompanionRecord>();
+        foreach (CompanionRecord record in data.Companions.Where(record => record is not null))
+            record.Bond ??= new CompanionBondRecord();
+        data.SchemaVersion = 12;
     }
 }

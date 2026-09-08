@@ -97,7 +97,18 @@ internal sealed class CompanionRegistry
                 || record.Bond.LastAffectionDay < -1
                 || record.Bond.LastGiftDay < -1
                 || record.Bond.GiftWeek < -1
-                || record.Bond.GiftsThisWeek is < 0 or > 2)
+                || record.Bond.GiftsThisWeek is < 0 or > 2
+                || record.Bond.LastWakeDay < -1
+                || record.Bond.LastGreetingDay < -1
+                || record.Bond.LastRainReactionDay < -1
+                || record.Bond.LastHomecomingDay < -1
+                || record.Bond.LastBedtimeDay < -1
+                || record.Bond.LastSeasonStartDay < -1
+                || record.Bond.LastFestivalDay < -1
+                || record.Bond.LastMiddayDay < -1
+                || record.Bond.LastSunsetDay < -1
+                || record.Bond.LastWeekendDay < -1
+                || record.Bond.LastLateNightDay < -1)
                 return RegistryLoadResult.Failure("INVALID-COMPANION-BOND", $"Identity {identity} has invalid independent bond state.");
 
             if (record.WorkDirective is not null)

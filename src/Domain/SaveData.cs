@@ -2,7 +2,7 @@ namespace YuiToIssho;
 
 internal sealed class YuiToIsshoSaveData
 {
-    public const int CurrentSchemaVersion = 11;
+    public const int CurrentSchemaVersion = 12;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
@@ -83,6 +83,18 @@ internal sealed class CompanionBondRecord
     public int LastHomecomingDay { get; set; } = -1;
 
     public int LastBedtimeDay { get; set; } = -1;
+
+    public int LastSeasonStartDay { get; set; } = -1;
+
+    public int LastFestivalDay { get; set; } = -1;
+
+    public int LastMiddayDay { get; set; } = -1;
+
+    public int LastSunsetDay { get; set; } = -1;
+
+    public int LastWeekendDay { get; set; } = -1;
+
+    public int LastLateNightDay { get; set; } = -1;
 
     public int GetHeartLevel() => Math.Clamp(this.Points / 250, 0, 10);
 }

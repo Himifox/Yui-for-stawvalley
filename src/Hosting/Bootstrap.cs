@@ -17,8 +17,8 @@ internal enum LifecycleState
 
 internal sealed class Bootstrap
 {
-    private const string SaveDataKey = "schema-v11";
-    private static readonly string[] LegacySaveDataKeys = { "schema-v10", "schema-v9" };
+    private const string SaveDataKey = "schema-v12";
+    private static readonly string[] LegacySaveDataKeys = { "schema-v11", "schema-v10", "schema-v9" };
 
     private readonly IModHelper helper;
     private readonly IMonitor monitor;
@@ -130,7 +130,7 @@ internal sealed class Bootstrap
         this.vitals.AttachCancellation(this.CancelForVitals);
         this.vitals.AttachDamageObserver(this.ObserveYuiDamage);
         this.multiplayer = new CompanionMultiplayerCoordinator(helper, monitor, this.projection, this.bodies);
-        this.speech = new CompanionSpeechCoordinator(helper, this.registry, this.bodies, this.multiplayer, monitor);
+        this.speech = new CompanionSpeechCoordinator(helper, this.registry, this.bodies, this.leisure, this.multiplayer, monitor);
         this.assist.AttachStartObserver(this.speech.ObserveNaturalAssistStarted);
         this.commands = new CompanionCommands(
             this.registry,
