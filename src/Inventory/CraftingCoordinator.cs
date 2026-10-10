@@ -149,8 +149,16 @@ internal sealed class CraftingCoordinator
     {
         this.currentTick = tick;
         foreach (ChestCraftSession session in this.chestSessions.Values.ToArray())
+        {
             if (OwnerLifecycleGate.CanAdvance(session.Owner))
                 this.UpdateChestSession(session);
+            else if (this.IsCurrentChestSession(session))
+            {
+                if (this.bodies.TryGetBody(session.Record.Identity, out NPC body))
+                    session.PathAttempts = TaskNavigationService.PauseIssuedPath(body, session.PathAttempts);
+                session.NextPathTick = tick;
+            }
+        }
         foreach (CompanionRecord record in this.registry.All.Where(record => record.CraftTransaction is not null && !this.chestSessions.ContainsKey(record.Identity)).ToArray())
             if (OwnerLifecycleGate.CanAdvance(record.Identity))
                 this.TryReconcilePersistedOutput(record);

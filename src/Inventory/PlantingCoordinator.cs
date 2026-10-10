@@ -204,7 +204,14 @@ internal sealed class PlantingCoordinator
                 continue;
             }
             if (!OwnerLifecycleGate.CanAdvance(runtime.Owner))
+            {
+                if (runtime.CurrentTask is PlantingTileTask task && this.execution.IsCurrent(task.Session))
+                    this.navigation.Pause(runtime.Identity, task.Navigation, tick);
+                else if (this.bodies.TryGetBody(runtime.Identity, out NPC body))
+                    runtime.PathAttempts = TaskNavigationService.PauseIssuedPath(body, runtime.PathAttempts);
+                runtime.NextPathTick = tick;
                 continue;
+            }
             if (runtime.Transaction.Phase is PlantingPhases.ReturningSeeds or PlantingPhases.Cancelling)
                 this.UpdateReturning(runtime);
             else if (runtime.Transaction.SourcePlan.Any(source => source.AcquiredQuantity < source.Quantity))

@@ -108,7 +108,17 @@ internal sealed class FishingCoordinator
     private void UpdateOne(FishingTask task, ulong tick)
     {
         if (!OwnerLifecycleGate.CanAdvance(task.Owner))
+        {
+            if (this.execution.IsCurrent(task.Session))
+            {
+                this.bodies.Halt(task.Identity);
+                if (this.bodies.TryGetBody(task.Identity, out NPC pausedBody))
+                    task.LastPosition = pausedBody.Position;
+                task.StuckSamples = 0;
+                task.NextPathTick = tick;
+            }
             return;
+        }
         if (!this.execution.IsCurrent(task.Session))
         {
             this.execution.AbandonRuntime(task.Session);

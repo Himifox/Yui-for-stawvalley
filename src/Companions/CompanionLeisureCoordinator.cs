@@ -213,11 +213,7 @@ internal sealed class CompanionLeisureCoordinator
         if (!OwnerLifecycleGate.CanAdvance(owner)
             && !(owner.IsSitting() && !owner.UsingTool && OwnerLifecycleGate.CanObserve(owner)))
         {
-            this.bodies.Halt(state.Identity);
-            state.Navigation.PathIssued = false;
-            state.Navigation.LastPosition = body.Position;
-            state.Navigation.LastProgressTick = tick;
-            state.Navigation.NextPathTick = tick;
+            this.navigation.Pause(state.Identity, state.Navigation, tick);
             return;
         }
 
