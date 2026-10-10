@@ -344,17 +344,17 @@ internal sealed class NekoAgentBridge
             WebSocketReceiveResult result = await socket.ReceiveAsync(chunk, cancellationToken).ConfigureAwait(false);
             if (result.MessageType == WebSocketMessageType.Close)
             {
-                await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Closing", CancellationToken.None).ConfigureAwait(false);
+                await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "Closing", cancellationToken).ConfigureAwait(false);
                 return null;
             }
             if (result.MessageType != WebSocketMessageType.Text)
             {
-                await socket.CloseAsync(WebSocketCloseStatus.InvalidMessageType, "Text messages only", CancellationToken.None).ConfigureAwait(false);
+                await socket.CloseOutputAsync(WebSocketCloseStatus.InvalidMessageType, "Text messages only", cancellationToken).ConfigureAwait(false);
                 return null;
             }
             if (message.Length + result.Count > MaximumRequestBytes)
             {
-                await socket.CloseAsync(WebSocketCloseStatus.MessageTooBig, "Request exceeds 8 KiB", CancellationToken.None).ConfigureAwait(false);
+                await socket.CloseOutputAsync(WebSocketCloseStatus.MessageTooBig, "Request exceeds 8 KiB", cancellationToken).ConfigureAwait(false);
                 return null;
             }
             message.Write(chunk, 0, result.Count);

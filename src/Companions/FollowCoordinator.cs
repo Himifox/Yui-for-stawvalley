@@ -38,7 +38,7 @@ internal sealed class FollowCoordinator
         CompanionRecord[] active = records.Where(record => record.WantsBody).ToArray();
         var activeIdentities = active.Select(record => record.Identity).ToHashSet();
         foreach (CompanionIdentity stale in this.runtime.Keys.Where(identity => !activeIdentities.Contains(identity)).ToArray())
-            this.runtime.Remove(stale);
+            this.StopFollowing(stale);
 
         if (!Context.IsMainPlayer)
         {
@@ -51,7 +51,7 @@ internal sealed class FollowCoordinator
             Farmer? owner = Game1.GetPlayer(record.OwnerId, onlyOnline: true);
             if (!OwnerLifecycleGate.CanAdvance(owner))
             {
-                this.bodies.Halt(record.Identity);
+                this.StopFollowing(record.Identity);
                 continue;
             }
             this.UpdateOne(record, tick);
@@ -66,6 +66,7 @@ internal sealed class FollowCoordinator
         if (record is null
             || !record.WantsBody
             || record.Mode != CompanionModes.Follow
+            || record.Vitals.State != CompanionVitalStates.Active
             || !string.IsNullOrWhiteSpace(record.ActiveTransactionId)
             || this.isPresenting(record.Identity))
             return;
@@ -85,7 +86,19 @@ internal sealed class FollowCoordinator
     public void PauseAll(IEnumerable<CompanionRecord> records)
     {
         foreach (CompanionRecord record in records)
-            this.bodies.Halt(record.Identity);
+            this.StopFollowing(record.Identity);
+    }
+
+    private void StopFollowing(CompanionIdentity identity)
+    {
+        if (!this.runtime.Remove(identity, out FollowRuntime? state))
+            return;
+        // Another coordinator may have replaced our path earlier in this update.
+        // Yielding follow must never stop that coordinator's movement.
+        if (state.Controller is not null
+            && this.bodies.TryGetBody(identity, out NPC body)
+            && ReferenceEquals(body.controller, state.Controller))
+            this.bodies.Halt(identity);
     }
 
     public void Clear()
@@ -98,13 +111,12 @@ internal sealed class FollowCoordinator
         CompanionIdentity identity = record.Identity;
         if (!string.IsNullOrWhiteSpace(record.ActiveTransactionId))
         {
-            this.runtime.Remove(identity);
+            this.StopFollowing(identity);
             return;
         }
         if (this.isPresenting(identity))
         {
-            this.bodies.Halt(identity);
-            this.runtime.Remove(identity);
+            this.StopFollowing(identity);
             return;
         }
 
@@ -122,10 +134,9 @@ internal sealed class FollowCoordinator
             }
         }
 
-        if (record.Mode != CompanionModes.Follow)
+        if (record.Mode != CompanionModes.Follow || record.Vitals.State != CompanionVitalStates.Active)
         {
-            this.bodies.Halt(identity);
-            this.runtime.Remove(identity);
+            this.StopFollowing(identity);
             return;
         }
 
@@ -209,6 +220,7 @@ internal sealed class FollowCoordinator
         }
 
         body.controller = controller;
+        state.Controller = controller;
         state.LastPosition = body.Position;
         state.LastProgressTick = tick;
         state.NextPathTick = tick + MinimumRepathDelayTicks;
@@ -297,6 +309,8 @@ internal sealed class FollowCoordinator
             this.LastPosition = initialPosition;
             this.LastProgressTick = tick;
         }
+
+        public PathFindController? Controller { get; set; }
 
         public Vector2 LastPosition { get; set; }
 

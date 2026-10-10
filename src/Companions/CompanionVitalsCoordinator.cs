@@ -413,7 +413,11 @@ internal sealed class CompanionVitalsCoordinator
         foreach (CompanionRecord record in this.registry.Active.ToArray())
         {
             if (!OwnerLifecycleGate.CanAdvance(record.Identity))
+            {
+                if (record.Vitals.State == CompanionVitalStates.Retreating)
+                    this.bodies.Halt(record.Identity);
                 continue;
+            }
             CompanionVitalsRecord vitals = record.Vitals;
             bool recoveryState = vitals.State is CompanionVitalStates.Downed or CompanionVitalStates.Recovering;
             if (vitals.LastNormalizedDay < day && (!recoveryState || day >= vitals.RecoveryDay))

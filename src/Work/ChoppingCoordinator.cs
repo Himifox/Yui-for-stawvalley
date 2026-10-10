@@ -119,6 +119,7 @@ internal sealed class ChoppingCoordinator
         if (!this.execution.IsCurrent(task.Session))
         {
             this.execution.AbandonRuntime(task.Session);
+            this.ReleaseDropCapture(task);
             this.tasks.Remove(task.Identity);
             return;
         }
@@ -274,6 +275,12 @@ internal sealed class ChoppingCoordinator
             return InventoryActionResult.Success("COMMITTED", $"Removed {task.Target} after {task.HitCount} single-settlement hit(s); routed {task.RoutedDropStacks} drop stack(s) to Yui responsibility.");
 
         task.AwaitingVanillaRemoval = task.TargetInstance.IsFalling;
+        if (task.AwaitingVanillaRemoval && task.TargetInstance.Instance is Tree fallingTree)
+            ChoppingTreeDropCapture.Track(fallingTree, drops =>
+            {
+                if (this.execution.IsCurrent(task.Session))
+                    task.DelayedDrops.UnionWith(drops);
+            });
         return InventoryActionResult.Success("STEP-COMMITTED", $"Committed chopping hit {task.HitCount} and routed {worldResult.StackCount} immediate drop stack(s).");
     }
 
@@ -282,29 +289,22 @@ internal sealed class ChoppingCoordinator
         if (task.DelayedRoutingPending)
             return true;
 
-        List<Debris> candidates = new();
-        foreach (Debris? debris in task.Location.debris)
-        {
-            if (debris is null || task.ObservedDebris.Contains(debris))
-                continue;
-            if (IsDelayedDropForTask(task, debris))
-                candidates.Add(debris);
-            else
-                task.ObservedDebris.Add(debris);
-        }
+        List<Debris> candidates = task.DelayedDrops.ToList();
         if (candidates.Count == 0)
             return false;
 
         string stepId = $"{task.OperationId}:delayed-drops:{task.DelayedDropSequence++}";
         if (!task.Session.TryEnterSettlement(stepId))
             return true;
-        task.ObservedDebris.UnionWith(candidates);
+        task.DelayedDrops.ExceptWith(candidates);
         task.DelayedRoutingPending = true;
         int routedStacks = 0;
         this.inventories.RequestTransfer(
             task.Identity,
             () =>
             {
+                if (!this.execution.IsCurrent(task.Session))
+                    return InventoryActionResult.Failure("SESSION-NOT-CURRENT", "The chopping task was cancelled before delayed output routing acquired the bag lock.");
                 WorldDebrisRouteResult routed = WorldDebrisCapture.RouteSpecificLocked(task.Identity, this.inventories, task.Location, candidates);
                 routedStacks = routed.StackCount;
                 return routed.Result;
@@ -325,18 +325,11 @@ internal sealed class ChoppingCoordinator
         return true;
     }
 
-    private static bool IsDelayedDropForTask(ChopTask task, Debris debris)
+    private void ReleaseDropCapture(ChopTask task)
     {
-        if (!WorldDebrisCapture.IsItemDrop(debris))
-            return false;
-        long droppedBy = debris.DroppedByPlayerID.Value;
-        if (droppedBy != 0 && droppedBy != task.Owner.UniqueMultiplayerID)
-            return false;
-
-        Vector2 targetPixel = (task.TargetTile + new Vector2(0.5f, 0.5f)) * Game1.tileSize;
-        const float radiusInTiles = 7f;
-        float radiusSquared = radiusInTiles * Game1.tileSize * radiusInTiles * Game1.tileSize;
-        return debris.Chunks.Any(chunk => Vector2.DistanceSquared(chunk.position.Value + new Vector2(32f, 32f), targetPixel) <= radiusSquared);
+        if (task.TargetInstance.Instance is Tree tree)
+            ChoppingTreeDropCapture.Release(tree);
+        task.DelayedDrops.Clear();
     }
 
     private ChopCommandResult Complete(ChopTask task, string code, string message, bool success)
@@ -344,6 +337,7 @@ internal sealed class ChoppingCoordinator
         if (!success)
             this.appearance.Fail(task.Identity, task.OperationId, code);
         TaskExecutionResult result = this.execution.Complete(task.Session, success, code, message);
+        this.ReleaseDropCapture(task);
         this.tasks.Remove(task.Identity);
         this.monitor.Log($"HY-CHOP-{code}: {message}", success ? LogLevel.Info : LogLevel.Warn);
         return FromExecution(result);
@@ -459,7 +453,6 @@ internal sealed class ChoppingCoordinator
             this.Tool = tool;
             this.TargetInstance = targetInstance;
             this.Navigation = new TaskNavigationState(initialPosition, 0);
-            this.ObservedDebris = WorldDebrisCapture.Snapshot(location);
         }
 
         public TaskSession Session { get; }
@@ -492,7 +485,7 @@ internal sealed class ChoppingCoordinator
 
         public bool AwaitingVanillaRemoval { get; set; }
 
-        public HashSet<Debris> ObservedDebris { get; }
+        public HashSet<Debris> DelayedDrops { get; } = new(ReferenceEqualityComparer.Instance);
 
         public bool DelayedRoutingPending { get; set; }
 

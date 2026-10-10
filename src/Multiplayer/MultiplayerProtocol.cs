@@ -497,8 +497,10 @@ internal static class MultiplayerRequestValidator
                         return "count must be from 1 through 999.";
                     break;
                 case "seconds":
-                    if (!int.TryParse(value, out int seconds) || seconds is < 2 or > 8)
-                        return "seconds must be from 2 through 8.";
+                    int minimumSeconds = command == "combat-guard" ? 5 : 2;
+                    int maximumSeconds = command == "combat-guard" ? 60 : 8;
+                    if (!int.TryParse(value, out int seconds) || seconds < minimumSeconds || seconds > maximumSeconds)
+                        return $"seconds must be from {minimumSeconds} through {maximumSeconds}.";
                     break;
                 case "operationId":
                     if (!IsBoundedToken(value, 96))

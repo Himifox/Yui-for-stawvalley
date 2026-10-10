@@ -186,13 +186,11 @@ internal sealed class ForageCoordinator
         }
 
         cost.Commit();
-        foreach (Item output in outputs)
-        {
-            InventoryActionResult routed = this.inventories.StoreGeneratedOutput(task.Identity, output);
-            if (!routed.IsSuccess)
-                return routed;
-        }
         WorldDebrisRouteResult worldResult = worldDrops.RouteNewLocked(task.Identity, this.inventories);
+        InventoryActionResult outputResult = GeneratedOutputSettlement.RouteLocked(
+            task.Identity, this.inventories, task.Location, task.TargetTile, outputs);
+        if (!outputResult.IsSuccess)
+            return outputResult;
         if (!worldResult.Result.IsSuccess)
             return worldResult.Result;
         int routedStacks = outputs.Count + worldResult.StackCount;

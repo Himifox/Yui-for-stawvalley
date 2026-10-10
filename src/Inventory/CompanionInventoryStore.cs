@@ -68,6 +68,11 @@ internal sealed class CompanionInventoryStore
 
     public bool ContainsExact(CompanionIdentity identity, Item item) => this.Get(identity).Any(candidate => ReferenceEquals(candidate, item));
 
+    internal bool ContainsGeneratedOutputExact(CompanionIdentity identity, Item item) => this.Get(identity)
+        .Concat(this.GetPendingOutputs(identity))
+        .Concat(this.GetRecoveryVault(identity))
+        .Any(candidate => ReferenceEquals(candidate, item));
+
     public bool TryResolveRegularSlot(CompanionIdentity identity, int oneBasedSlot, out int physicalIndex, out Item? item)
     {
         physicalIndex = -1;
@@ -379,14 +384,18 @@ internal sealed class CompanionInventoryStore
             if (destination.Any(candidate => ReferenceEquals(candidate, item)))
                 return InventoryActionResult.Success(code, $"Stored exact generated stack {item.QualifiedItemId} x{item.Stack} before the container reported an error.");
 
+            Inventory? recoveryVault = null;
             try
             {
                 EnsureOutputResponsibility(item);
-                this.GetRecoveryVault(identity).Add(item);
+                recoveryVault = this.GetRecoveryVault(identity);
+                recoveryVault.Add(item);
                 return InventoryActionResult.Failure("OUTPUT-IN-RECOVERY", $"Normal output routing failed; the exact stack was retained in Recovery Vault: {ex.Message}");
             }
             catch (Exception recoveryError)
             {
+                if (recoveryVault is not null && recoveryVault.Any(candidate => ReferenceEquals(candidate, item)))
+                    return InventoryActionResult.Failure("OUTPUT-IN-RECOVERY", $"The exact stack was retained in Recovery Vault before the container reported an error: {recoveryError.Message}");
                 return InventoryActionResult.Failure("OUTPUT-RESPONSIBILITY-UNKNOWN", $"Both output routing and Recovery Vault failed: {recoveryError.Message}");
             }
         }

@@ -14,6 +14,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="tests/**/*.cs" />
+    <InternalsVisibleTo Include="YuiToIssho.RegressionTests" />
     <PackageReference Include="Pathoschild.Stardew.ModBuildConfig" Version="4.4.0" />
     <Reference Include="0Harmony">
       <HintPath>$(GamePath)\smapi-internal\0Harmony.dll</HintPath>

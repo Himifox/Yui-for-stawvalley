@@ -174,6 +174,12 @@ internal sealed class CommandCursorCoordinator
         {
             operationMarker.StatusQueryPending = false;
             operationMarker.NextStatusQueryTick = Game1.ticks + StatusPollTicks;
+            if (IsReceiptTimeout(receipt.Result.Code))
+            {
+                operationMarker.Phase = CursorMarkerPhases.Paused;
+                operationMarker.Summary = receipt.Result.Code;
+                return;
+            }
             this.ApplyOperationStatus(operationMarker, receipt.Result.IsSuccess, receipt.Result.Code);
         }
     }
@@ -271,6 +277,14 @@ internal sealed class CommandCursorCoordinator
             marker.Phase = CursorMarkerPhases.Pending;
             return;
         }
+        if (IsReceiptTimeout(result.Code))
+        {
+            marker.ReceiptAccepted = true;
+            marker.ReceiptSnapshotVersion = snapshotVersion;
+            marker.Phase = CursorMarkerPhases.Paused;
+            marker.NextStatusQueryTick = Game1.ticks + StatusPollTicks;
+            return;
+        }
         if (!result.IsSuccess)
         {
             this.SetTerminal(marker, CursorMarkerPhases.Failed, result.Code);
@@ -282,6 +296,8 @@ internal sealed class CommandCursorCoordinator
         marker.ExpiresAt = int.MaxValue;
         marker.NextStatusQueryTick = Game1.ticks + StatusPollTicks;
     }
+
+    private static bool IsReceiptTimeout(string code) => code is "RECEIPT-TIMEOUT" or "DEFERRED-TIMEOUT";
 
     private void ApplyOperationStatus(CursorMarker marker, bool success, string code)
     {

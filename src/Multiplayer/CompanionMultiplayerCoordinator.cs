@@ -581,6 +581,8 @@ internal sealed class CompanionMultiplayerCoordinator
                 if (tick - pending.FirstSentTick >= DeferredReceiptTimeoutTicks)
                 {
                     this.pendingOutbound.Remove(pending.Dto.RequestId);
+                    this.RememberUnknownOperation(pending.Dto);
+                    this.NotifyRequestTimeout(pending.Dto, "DEFERRED-TIMEOUT");
                     this.monitor.Log($"HY-NET-DEFERRED-TIMEOUT: Host did not finish deferred request {pending.Dto.RequestId} within the bounded wait.", LogLevel.Warn);
                     continue;
                 }
@@ -592,6 +594,7 @@ internal sealed class CompanionMultiplayerCoordinator
             {
                 this.pendingOutbound.Remove(pending.Dto.RequestId);
                 this.RememberUnknownOperation(pending.Dto);
+                this.NotifyRequestTimeout(pending.Dto, "RECEIPT-TIMEOUT");
                 this.monitor.Log($"HY-NET-RECEIPT-TIMEOUT: Host did not settle request {pending.Dto.RequestId} after {pending.Attempts} send attempts; recoverable operations will be queried after the next authoritative snapshot.", LogLevel.Warn);
                 continue;
             }
@@ -599,6 +602,17 @@ internal sealed class CompanionMultiplayerCoordinator
             pending.LastSentTick = tick;
             this.SendCommand(pending.Dto);
         }
+    }
+
+    private void NotifyRequestTimeout(CommandRequestDto request, string code)
+    {
+        this.receiptObserver?.Invoke(new CommandReceiptObservation(
+            request.RequestId,
+            new CompanionIdentity(request.OwnerId, request.Slot),
+            request.Command,
+            request.Fields,
+            NetworkCommandResult.Failure(code, "The host result is unknown because its receipt timed out."),
+            this.projection.SnapshotVersion));
     }
 
     private void SendCommand(CommandRequestDto dto) =>
@@ -772,7 +786,9 @@ internal sealed class CompanionMultiplayerCoordinator
     {
         if (!IsRecoverableOperation(dto.Command))
             return;
-        string operationId = dto.Fields.TryGetValue("operationId", out string? supplied) ? supplied : $"r11-{dto.RequestId}";
+        string operationId = dto.Command == "cursor-single"
+            ? $"cursor-{dto.RequestId}"
+            : dto.Fields.TryGetValue("operationId", out string? supplied) ? supplied : $"r11-{dto.RequestId}";
         if (operationId.Length is > 0 and <= 128)
             this.unknownOperations[operationId] = new UnknownOutboundOperation(new CompanionIdentity(dto.OwnerId, dto.Slot), operationId, dto.Command);
     }
@@ -794,7 +810,7 @@ internal sealed class CompanionMultiplayerCoordinator
     }
 
     private static bool IsRecoverableOperation(string command) => command is
-        "water" or "chop" or "mine" or "harvest" or "forage" or "mow" or "dig" or "fish" or "fight" or "care" or "craft-start";
+        "water" or "chop" or "mine" or "harvest" or "forage" or "mow" or "dig" or "fish" or "fight" or "care" or "craft-start" or "cursor-single";
 
     private static bool IsDefinitiveOperationStatus(string code) => code is not
         ("HOST-LIFECYCLE-GATE" or "OWNER-OFFLINE" or "PLAYER-BUSY" or "SAVE-DATA-READ-ONLY" or "COMMAND-ROUTE-FAILED" or "NETWORK-SESSION-NOT-READY");
