@@ -18,6 +18,7 @@ internal static class NetworkRegressionTests
             Require(!Validate("vitals-rest", seconds).IsSuccess, $"Rest should reject {seconds}s.");
 
         TimeoutRecovery();
+        CursorTimeoutOutcomes();
         RejectInvalidMessageAsync(WebSocketMessageType.Binary, 1).GetAwaiter().GetResult();
         RejectInvalidMessageAsync(WebSocketMessageType.Text, 8193).GetAwaiter().GetResult();
         Console.WriteLine("Network regressions passed (duration contracts and real WebSocket rejection).");
@@ -71,6 +72,42 @@ internal static class NetworkRegressionTests
             && receipt.Result.Code == "RECEIPT-TIMEOUT"
             && !receipt.Result.IsSuccess,
             "Receipt timeout must notify the originating UI with its request identity.");
+    }
+
+    private static void CursorTimeoutOutcomes()
+    {
+        var cursor = new CommandCursorCoordinator(null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
+        Type type = typeof(CommandCursorCoordinator);
+        Type markerType = type.GetNestedType("CursorMarker", BindingFlags.NonPublic)!;
+        object Marker(string shape) => Activator.CreateInstance(markerType, new object[]
+        {
+            CompanionIdentity.ForOwner(1), "Farm", new Microsoft.Xna.Framework.Point(1, 1),
+            new Microsoft.Xna.Framework.Point(2, 2), WorkKinds.Water, shape, Guid.NewGuid().ToString("N"),
+        })!;
+        object? Read(object marker, string property) => markerType.GetProperty(property)!.GetValue(marker);
+        void Apply(object marker, NetworkCommandResult result) =>
+            type.GetMethod("ApplySubmissionResult", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(cursor, new object[] { marker, result, 42UL });
+
+        foreach (string code in new[] { "RECEIPT-TIMEOUT", "DEFERRED-TIMEOUT" })
+        {
+            object area = Marker(WorkScopeShapes.Rectangle);
+            Apply(area, NetworkCommandResult.Failure(code, "Host result unknown."));
+            Require((string)Read(area, "Phase")! == "Unknown", "An unconfirmed area request must not imply completion or rejection.");
+            Require((bool)Read(area, "IsTerminal")!, "Unknown area results must stop snapshot-based completion tracking.");
+            Require(!(bool)Read(area, "ReceiptAccepted")!, "An area receipt timeout must not count as host acceptance.");
+            Require((string)Read(area, "Summary")! == code, "The unknown marker should preserve the timeout reason.");
+
+            object single = Marker(WorkScopeShapes.SingleTarget);
+            Apply(single, NetworkCommandResult.Failure(code, "Host result unknown."));
+            Require((string)Read(single, "Phase")! == "Paused" && !(bool)Read(single, "IsTerminal")!,
+                "Single tasks must retain operation-status recovery after a receipt timeout.");
+            Require((bool)Read(single, "ReceiptAccepted")!, "Single-task recovery must remain enabled.");
+        }
+        object accepted = Marker(WorkScopeShapes.Rectangle);
+        Apply(accepted, NetworkCommandResult.Success("WORK-STARTED", "Accepted."));
+        Require((string)Read(accepted, "Phase")! == "Accepted" && !(bool)Read(accepted, "IsTerminal")!,
+            "An acknowledged area request must continue normal snapshot tracking.");
     }
 
     private static async Task RejectInvalidMessageAsync(WebSocketMessageType messageType, int payloadSize)

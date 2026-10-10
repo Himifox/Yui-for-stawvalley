@@ -279,6 +279,12 @@ internal sealed class CommandCursorCoordinator
         }
         if (IsReceiptTimeout(result.Code))
         {
+            if (!marker.IsSingle)
+            {
+                // Area snapshots cannot identify this request or its final result.
+                this.SetTerminal(marker, CursorMarkerPhases.Unknown, result.Code);
+                return;
+            }
             marker.ReceiptAccepted = true;
             marker.ReceiptSnapshotVersion = snapshotVersion;
             marker.Phase = CursorMarkerPhases.Paused;
@@ -530,7 +536,7 @@ internal sealed class CommandCursorCoordinator
         CursorMarkerPhases.Accepted => Color.DodgerBlue,
         CursorMarkerPhases.Navigating => Color.Gold,
         CursorMarkerPhases.Executing => Color.LimeGreen,
-        CursorMarkerPhases.Paused => Color.Orange,
+        CursorMarkerPhases.Paused or CursorMarkerPhases.Unknown => Color.Orange,
         CursorMarkerPhases.Completed => Color.Gray,
         _ => Color.IndianRed,
     };
@@ -580,6 +586,7 @@ internal sealed class CommandCursorCoordinator
         public const string Paused = "Paused";
         public const string Failed = "Failed";
         public const string Completed = "Completed";
+        public const string Unknown = "Unknown";
     }
 
     private sealed class CursorMarker
@@ -612,7 +619,7 @@ internal sealed class CommandCursorCoordinator
         public int ExpiresAt { get; set; } = int.MaxValue;
 
         public bool IsSingle => this.Shape == WorkScopeShapes.SingleTarget;
-        public bool IsTerminal => this.Phase is CursorMarkerPhases.Failed or CursorMarkerPhases.Completed;
+        public bool IsTerminal => this.Phase is CursorMarkerPhases.Failed or CursorMarkerPhases.Completed or CursorMarkerPhases.Unknown;
 
         public static CursorMarker LocalFailure(CompanionIdentity identity, string locationKey, Point first, Point second, string kind, string summary, int expiresAt) => new(identity, locationKey, first, second, kind, WorkScopeShapes.SingleTarget, string.Empty)
         {
