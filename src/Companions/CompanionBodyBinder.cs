@@ -191,7 +191,7 @@ internal sealed class CompanionBodyBinder
         return null;
     }
 
-    private static void StopBody(NPC body)
+    internal static void StopBody(NPC body)
     {
         body.controller = null;
         body.Halt();

@@ -208,6 +208,15 @@ internal sealed class CompanionLeisureCoordinator
         }
         this.SetSeatOccupancy(state);
 
+        // Sitting is the expected automatic-join context, even though the owner
+        // cannot move. Other lifecycle pauses must suspend our own approach path.
+        if (!OwnerLifecycleGate.CanAdvance(owner)
+            && !(owner.IsSitting() && !owner.UsingTool && OwnerLifecycleGate.CanObserve(owner)))
+        {
+            this.navigation.Pause(state.Identity, state.Navigation, tick);
+            return;
+        }
+
         if (state.Phase == LeisurePhases.Seated)
         {
             this.bodies.Halt(state.Identity);

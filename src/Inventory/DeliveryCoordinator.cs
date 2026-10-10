@@ -40,8 +40,12 @@ internal sealed class DeliveryCoordinator
     {
         this.currentTick = tick;
         foreach (DeliveryTask task in this.tasks.Values.ToArray())
+        {
             if (OwnerLifecycleGate.CanAdvance(task.Session.Identity))
                 this.UpdateOne(task, tick);
+            else if (this.execution.IsCurrent(task.Session))
+                this.navigation.Pause(task.Session.Identity, task.Navigation, tick);
+        }
         if (tick % 60 != 0)
             return;
         foreach (CompanionRecord record in this.registry.Active)

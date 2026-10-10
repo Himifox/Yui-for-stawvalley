@@ -116,7 +116,11 @@ internal sealed class AnimalCareCoordinator
     private void UpdateOne(CareTask task, ulong tick)
     {
         if (!OwnerLifecycleGate.CanAdvance(task.Owner))
+        {
+            if (this.execution.IsCurrent(task.Session))
+                this.navigation.Pause(task.Identity, task.Navigation, tick);
             return;
+        }
         if (!this.execution.IsCurrent(task.Session))
         {
             this.execution.AbandonRuntime(task.Session);
@@ -381,13 +385,11 @@ internal sealed class AnimalCareCoordinator
         if (produceCleared)
             cost.Commit();
 
-        foreach (Item output in outputs)
-        {
-            InventoryActionResult routed = this.inventories.StoreGeneratedOutput(task.Identity, output);
-            if (!routed.IsSuccess)
-                return routed;
-        }
         WorldDebrisRouteResult worldResult = worldDrops.RouteNewLocked(task.Identity, this.inventories);
+        InventoryActionResult outputResult = GeneratedOutputSettlement.RouteLocked(
+            task.Identity, this.inventories, task.Location, settledAnimal.Tile, outputs);
+        if (!outputResult.IsSuccess)
+            return outputResult;
         if (!worldResult.Result.IsSuccess)
             return worldResult.Result;
         int routedStacks = outputs.Count + worldResult.StackCount;

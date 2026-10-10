@@ -204,7 +204,14 @@ internal sealed class PlantingCoordinator
                 continue;
             }
             if (!OwnerLifecycleGate.CanAdvance(runtime.Owner))
+            {
+                if (runtime.CurrentTask is PlantingTileTask task && this.execution.IsCurrent(task.Session))
+                    this.navigation.Pause(runtime.Identity, task.Navigation, tick);
+                else if (this.bodies.TryGetBody(runtime.Identity, out NPC body))
+                    runtime.PathAttempts = TaskNavigationService.PauseIssuedPath(body, runtime.PathAttempts);
+                runtime.NextPathTick = tick;
                 continue;
+            }
             if (runtime.Transaction.Phase is PlantingPhases.ReturningSeeds or PlantingPhases.Cancelling)
                 this.UpdateReturning(runtime);
             else if (runtime.Transaction.SourcePlan.Any(source => source.AcquiredQuantity < source.Quantity))
@@ -670,7 +677,8 @@ internal sealed class PlantingCoordinator
             return;
         }
 
-        if (source.Record.SourceKind == PlantingSourceKinds.AuthorizedChest
+        if (!source.ReturnToBag
+            && source.Record.SourceKind == PlantingSourceKinds.AuthorizedChest
             && source.Chest is CraftChestAccess access
             && CompanionStorageCoordinator.IsCurrentCraftChest(access, runtime.Identity.OwnerId)
             && this.bodies.TryGetBody(runtime.Identity, out NPC body)
@@ -707,6 +715,8 @@ internal sealed class PlantingCoordinator
         runtime.ReturnPending = true;
         this.inventories.RequestTransfer(runtime.Identity, () =>
         {
+            if (!this.IsCurrent(runtime) || runtime.Transaction.Phase is not (PlantingPhases.ReturningSeeds or PlantingPhases.Cancelling))
+                return InventoryActionResult.Failure("PLANT-RETURN-STALE", "The original seed return was paused or replaced; nothing moved.");
             Item? seed = FindEscrowItem(runtime.Identity, source.Record.SourceId);
             if (seed is null)
                 return InventoryActionResult.Failure("PLANT-RETURN-SEED-MISSING", "The exact Plant Escrow source disappeared before return.");
@@ -738,12 +748,20 @@ internal sealed class PlantingCoordinator
         NetMutex chestMutex = access.Chest.GetMutex();
         chestMutex.RequestLock(() =>
         {
+            if (!this.IsCurrent(runtime))
+            {
+                runtime.LockPending = false;
+                chestMutex.ReleaseLock();
+                return;
+            }
             NetMutex bagMutex = Game1.player.team.GetOrCreateGlobalInventoryMutex(CompanionInventoryStore.GetNamespace(runtime.Identity));
             bagMutex.RequestLock(() =>
             {
                 bool returned = false;
                 try
                 {
+                    if (!this.IsCurrent(runtime) || runtime.Transaction.Phase is not (PlantingPhases.ReturningSeeds or PlantingPhases.Cancelling))
+                        return;
                     Item? seed = FindEscrowItem(runtime.Identity, source.Record.SourceId);
                     returned = seed is not null
                         && CompanionStorageCoordinator.IsCurrentCraftChest(access, runtime.Identity.OwnerId)

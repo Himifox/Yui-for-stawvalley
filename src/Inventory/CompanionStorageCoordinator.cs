@@ -330,8 +330,22 @@ internal sealed class CompanionStorageCoordinator
         this.currentTick = tick;
         this.ObserveBorrowedTools();
         foreach (StorageTransfer transfer in this.transfers.Values.ToArray())
+        {
             if (OwnerLifecycleGate.CanAdvance(transfer.Identity))
                 this.UpdateTransfer(transfer);
+            else if (this.IsCurrent(transfer)
+                && this.registry.TryGet(transfer.Identity, out CompanionRecord record)
+                && record.ActiveTransactionId == transfer.OperationId)
+            {
+                if (this.bodies.TryGetBody(transfer.Identity, out NPC body))
+                {
+                    transfer.PathAttempts = TaskNavigationService.PauseIssuedPath(body, transfer.PathAttempts);
+                    transfer.LastPosition = body.Position;
+                }
+                transfer.LastProgressTick = tick;
+                transfer.NextPathTick = tick;
+            }
+        }
     }
 
     public void CancelRuntime(string code)

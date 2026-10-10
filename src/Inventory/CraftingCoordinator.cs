@@ -149,8 +149,16 @@ internal sealed class CraftingCoordinator
     {
         this.currentTick = tick;
         foreach (ChestCraftSession session in this.chestSessions.Values.ToArray())
+        {
             if (OwnerLifecycleGate.CanAdvance(session.Owner))
                 this.UpdateChestSession(session);
+            else if (this.IsCurrentChestSession(session))
+            {
+                if (this.bodies.TryGetBody(session.Record.Identity, out NPC body))
+                    session.PathAttempts = TaskNavigationService.PauseIssuedPath(body, session.PathAttempts);
+                session.NextPathTick = tick;
+            }
+        }
         foreach (CompanionRecord record in this.registry.All.Where(record => record.CraftTransaction is not null && !this.chestSessions.ContainsKey(record.Identity)).ToArray())
             if (OwnerLifecycleGate.CanAdvance(record.Identity))
                 this.TryReconcilePersistedOutput(record);
@@ -167,8 +175,7 @@ internal sealed class CraftingCoordinator
                 craft.LastFailure = "RECOVERED-WITHOUT-RUNTIME-SOURCE-REFERENCES";
                 this.inventories.RequestTransfer(record.Identity, () =>
                 {
-                    this.ReturnEscrowToBag(record, "CRAFT-RECOVERED-CANCELLED");
-                    return InventoryActionResult.Success("CRAFT-RECOVERED-CANCELLED", "Recovered pre-output craft materials into a responsible local container.");
+                    return this.ReturnEscrowToBag(record, craft, "CRAFT-RECOVERED-CANCELLED");
                 }, _ => { });
             }
         }
@@ -210,11 +217,10 @@ internal sealed class CraftingCoordinator
             this.FailChestSession(session, "PLAYER-CANCELLED");
             return CraftActionResult.Success("CRAFT-CANCELLED", "Craft acquisition stopped; reserved materials were retained in the Yui bag or Craft Escrow.");
         }
-        this.inventories.RequestTransfer(identity, () =>
-        {
-            this.ReturnEscrowToBag(record, "PLAYER-CANCELLED");
-            return InventoryActionResult.Success("CRAFT-CANCELLED", "Craft cancellation reconciled its retained materials.");
-        }, _ => { });
+        CraftTransactionRecord transaction = record.CraftTransaction;
+        transaction.Phase = CraftPhases.ReturningMaterials;
+        this.inventories.RequestTransfer(identity,
+            () => this.ReturnEscrowToBag(record, transaction, "PLAYER-CANCELLED"), _ => { });
         return CraftActionResult.Success("CRAFT-CANCEL-QUEUED", "Craft cancellation is waiting for the Yui bag lock.");
     }
 
@@ -433,6 +439,10 @@ internal sealed class CraftingCoordinator
 
     private InventoryActionResult AcquireBagSources(ChestCraftSession session)
     {
+        if (!this.IsCurrentChestSession(session))
+            return InventoryActionResult.Failure("CRAFT-SESSION-STALE", "The chest craft was cancelled or replaced before material acquisition.");
+        if (!OwnerLifecycleGate.CanAdvance(session.Owner))
+            return InventoryActionResult.Failure("OWNER-BUSY", "The Owner became busy before material acquisition; nothing moved.");
         Inventory bag = this.inventories.Get(session.Record.Identity);
         Inventory escrow = this.inventories.GetCraftEscrow(session.Record.Identity);
         foreach (PlannedCraftSource source in session.Sources.Where(source => !source.Chest.HasValue))
@@ -442,6 +452,7 @@ internal sealed class CraftingCoordinator
                 return InventoryActionResult.Failure("CRAFT-BAG-SOURCE-CHANGED", "A planned bag material changed before locked acquisition.");
             MoveToEscrow(session.Transaction.CraftId, source, bag, escrow, index);
         }
+        session.BagAcquired = true;
         session.Transaction.Phase = CraftPhases.AcquiringMaterials;
         session.Transaction.UpdatedTick = this.currentTick;
         return InventoryActionResult.Success("CRAFT-BAG-ACQUIRED", "Planned Yui bag materials moved into Craft Escrow.");
@@ -449,7 +460,7 @@ internal sealed class CraftingCoordinator
 
     private void UpdateChestSession(ChestCraftSession session)
     {
-        if (!this.chestSessions.ContainsKey(session.Record.Identity) || session.Record.CraftTransaction != session.Transaction)
+        if (!this.IsCurrentChestSession(session) || !session.BagAcquired)
             return;
         PlannedCraftSource? next = session.Sources.FirstOrDefault(source => !source.Record.Acquired && source.Chest.HasValue);
         if (next is null)
@@ -470,7 +481,8 @@ internal sealed class CraftingCoordinator
                     }
                     if (!result.IsSuccess)
                         this.monitor.Log($"HY-CRAFT-{result.Code}: {session.Record.Identity} {result.Message}", LogLevel.Warn);
-                    this.chestSessions.Remove(session.Record.Identity);
+                    if (this.chestSessions.TryGetValue(session.Record.Identity, out ChestCraftSession? current) && ReferenceEquals(current, session))
+                        this.chestSessions.Remove(session.Record.Identity);
                 });
             }
             return;
@@ -514,6 +526,11 @@ internal sealed class CraftingCoordinator
         NetMutex chestMutex = access.Chest.GetMutex();
         chestMutex.RequestLock(() =>
         {
+            if (!this.IsCurrentChestSession(session))
+            {
+                chestMutex.ReleaseLock();
+                return;
+            }
             NetMutex bagMutex = Game1.player.team.GetOrCreateGlobalInventoryMutex(CompanionInventoryStore.GetNamespace(session.Record.Identity));
             bagMutex.RequestLock(() =>
             {
@@ -524,7 +541,7 @@ internal sealed class CraftingCoordinator
                         session.LockRequested = false;
                         return;
                     }
-                    if (!this.chestSessions.ContainsKey(session.Record.Identity) || !CompanionStorageCoordinator.IsCurrentCraftChest(access, session.Record.OwnerId))
+                    if (!this.IsCurrentChestSession(session) || !CompanionStorageCoordinator.IsCurrentCraftChest(access, session.Record.OwnerId))
                         return;
                     Inventory escrow = this.inventories.GetCraftEscrow(session.Record.Identity);
                     PlannedCraftSource[] group = session.Sources.Where(source => !source.Record.Acquired && source.Chest.HasValue && source.Chest.Value.Authorization.ChestToken == access.Authorization.ChestToken).ToArray();
@@ -555,6 +572,8 @@ internal sealed class CraftingCoordinator
 
     private CraftActionResult CommitEscrowed(ChestCraftSession session)
     {
+        if (!this.IsCurrentChestSession(session))
+            return CraftActionResult.Failure("CRAFT-SESSION-STALE", "The chest craft was cancelled or replaced before output creation.");
         if (!OwnerLifecycleGate.CanAdvance(session.Owner))
             return CraftActionResult.Failure("OWNER-BUSY", "This Yui's Owner became busy before output creation; escrowed materials remain unchanged.");
         CraftTransactionRecord transaction = session.Transaction;
@@ -616,34 +635,46 @@ internal sealed class CraftingCoordinator
 
     private void FailChestSession(ChestCraftSession session, string reason)
     {
-        if (!this.chestSessions.Remove(session.Record.Identity))
+        if (!this.IsCurrentChestSession(session))
             return;
+        this.chestSessions.Remove(session.Record.Identity);
         session.Transaction.Phase = CraftPhases.ReturningMaterials;
         session.Transaction.LastFailure = reason;
         session.Record.ActiveTransactionId = null;
         NetMutex bagMutex = Game1.player.team.GetOrCreateGlobalInventoryMutex(CompanionInventoryStore.GetNamespace(session.Record.Identity));
         if (bagMutex.IsLockHeld())
-            this.ReturnEscrowToBag(session.Record, reason);
+            this.ReturnEscrowToBag(session.Record, session.Transaction, reason);
         else
-            this.inventories.RequestTransfer(session.Record.Identity, () =>
-            {
-                this.ReturnEscrowToBag(session.Record, reason);
-                return InventoryActionResult.Success("CRAFT-RETURNED", "Pre-output craft materials were retained in the Yui bag or Craft Escrow.");
-            }, _ => { });
+            this.inventories.RequestTransfer(session.Record.Identity,
+                () => this.ReturnEscrowToBag(session.Record, session.Transaction, reason), _ => { });
     }
 
-    private void ReturnEscrowToBag(CompanionRecord record, string reason)
+    private InventoryActionResult ReturnEscrowToBag(CompanionRecord record, CraftTransactionRecord transaction, string reason)
     {
+        if (!this.IsCurrentTransaction(record, transaction) || transaction.OutputToken is not null || !CraftPhases.CanCancel(transaction.Phase))
+            return InventoryActionResult.Failure("CRAFT-RETURN-STALE", "The original pre-output craft is no longer current; no materials moved.");
         if (!this.MoveEscrowToBag(record.Identity))
         {
-            record.CraftTransaction!.Phase = CraftPhases.Faulted;
-            record.CraftTransaction.LastFailure = $"{reason}:RETURN-BAG-FULL";
-            return;
+            transaction.Phase = CraftPhases.Faulted;
+            transaction.LastFailure = $"{reason}:RETURN-BAG-FULL";
+            return InventoryActionResult.Failure("CRAFT-RETURN-BAG-FULL", "The bag is full; remaining materials are retained in Craft Escrow and the transaction is faulted.");
         }
-        string operationId = record.CraftTransaction!.OperationId;
-        TaskReceiptStore.Add(record, operationId, false, "CRAFT-CANCELLED", $"Craft stopped before output creation; real materials were retained in the Yui bag ({reason}).");
+        TaskReceiptStore.Add(record, transaction.OperationId, false, "CRAFT-CANCELLED", $"Craft stopped before output creation; real materials were retained in the Yui bag ({reason}).");
         record.CraftTransaction = null;
+        record.ActiveTransactionId = null;
+        return InventoryActionResult.Success("CRAFT-CANCELLED", "Pre-output craft materials were returned to the Yui bag.");
     }
+
+    private bool IsCurrentTransaction(CompanionRecord record, CraftTransactionRecord transaction) =>
+        this.registry.TryGet(record.Identity, out CompanionRecord current)
+        && ReferenceEquals(current, record)
+        && ReferenceEquals(record.CraftTransaction, transaction);
+
+    private bool IsCurrentChestSession(ChestCraftSession session) =>
+        this.chestSessions.TryGetValue(session.Record.Identity, out ChestCraftSession? current)
+        && ReferenceEquals(current, session)
+        && this.IsCurrentTransaction(session.Record, session.Transaction)
+        && session.Record.ActiveTransactionId == $"craft:{session.Transaction.CraftId}";
 
     private bool MoveEscrowToBag(CompanionIdentity identity)
     {
@@ -970,6 +1001,7 @@ internal sealed class CraftingCoordinator
         public CraftRecipeDescriptor Recipe { get; }
         public CraftTransactionRecord Transaction { get; }
         public List<PlannedCraftSource> Sources { get; }
+        public bool BagAcquired { get; set; }
         public bool LockRequested { get; set; }
         public bool CommitRequested { get; set; }
         public int PathAttempts { get; set; }

@@ -535,6 +535,27 @@ internal sealed class TaskNavigationService
         return new TaskNavigationResult(false, tick >= state.NextPathTick);
     }
 
+    public static int PauseIssuedPath(NPC body, int pathAttempts)
+    {
+        // These callers charge on issue, unlike TaskNavigationState's failures.
+        // Refund only the live path we interrupt, once, before clearing it.
+        if (body.controller is not null)
+            pathAttempts = Math.Max(0, pathAttempts - 1);
+        CompanionBodyBinder.StopBody(body);
+        return pathAttempts;
+    }
+
+    public void Pause(CompanionIdentity identity, TaskNavigationState state, ulong tick)
+    {
+        this.bodies.Halt(identity);
+        if (this.bodies.TryGetBody(identity, out NPC body))
+            state.LastPosition = body.Position;
+        // A lifecycle pause is neither a failed path nor a new retry budget.
+        state.PathIssued = false;
+        state.LastProgressTick = tick;
+        state.NextPathTick = tick;
+    }
+
     public void MarkPathIssued(TaskNavigationState state, Vector2 position, ulong tick, int repathDelayTicks)
     {
         state.PathIssued = true;

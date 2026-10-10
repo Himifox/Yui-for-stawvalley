@@ -174,6 +174,12 @@ internal sealed class CommandCursorCoordinator
         {
             operationMarker.StatusQueryPending = false;
             operationMarker.NextStatusQueryTick = Game1.ticks + StatusPollTicks;
+            if (IsReceiptTimeout(receipt.Result.Code))
+            {
+                operationMarker.Phase = CursorMarkerPhases.Paused;
+                operationMarker.Summary = receipt.Result.Code;
+                return;
+            }
             this.ApplyOperationStatus(operationMarker, receipt.Result.IsSuccess, receipt.Result.Code);
         }
     }
@@ -271,6 +277,20 @@ internal sealed class CommandCursorCoordinator
             marker.Phase = CursorMarkerPhases.Pending;
             return;
         }
+        if (IsReceiptTimeout(result.Code))
+        {
+            if (!marker.IsSingle)
+            {
+                // Area snapshots cannot identify this request or its final result.
+                this.SetTerminal(marker, CursorMarkerPhases.Unknown, result.Code);
+                return;
+            }
+            marker.ReceiptAccepted = true;
+            marker.ReceiptSnapshotVersion = snapshotVersion;
+            marker.Phase = CursorMarkerPhases.Paused;
+            marker.NextStatusQueryTick = Game1.ticks + StatusPollTicks;
+            return;
+        }
         if (!result.IsSuccess)
         {
             this.SetTerminal(marker, CursorMarkerPhases.Failed, result.Code);
@@ -282,6 +302,8 @@ internal sealed class CommandCursorCoordinator
         marker.ExpiresAt = int.MaxValue;
         marker.NextStatusQueryTick = Game1.ticks + StatusPollTicks;
     }
+
+    private static bool IsReceiptTimeout(string code) => code is "RECEIPT-TIMEOUT" or "DEFERRED-TIMEOUT";
 
     private void ApplyOperationStatus(CursorMarker marker, bool success, string code)
     {
@@ -514,7 +536,7 @@ internal sealed class CommandCursorCoordinator
         CursorMarkerPhases.Accepted => Color.DodgerBlue,
         CursorMarkerPhases.Navigating => Color.Gold,
         CursorMarkerPhases.Executing => Color.LimeGreen,
-        CursorMarkerPhases.Paused => Color.Orange,
+        CursorMarkerPhases.Paused or CursorMarkerPhases.Unknown => Color.Orange,
         CursorMarkerPhases.Completed => Color.Gray,
         _ => Color.IndianRed,
     };
@@ -564,6 +586,7 @@ internal sealed class CommandCursorCoordinator
         public const string Paused = "Paused";
         public const string Failed = "Failed";
         public const string Completed = "Completed";
+        public const string Unknown = "Unknown";
     }
 
     private sealed class CursorMarker
@@ -596,7 +619,7 @@ internal sealed class CommandCursorCoordinator
         public int ExpiresAt { get; set; } = int.MaxValue;
 
         public bool IsSingle => this.Shape == WorkScopeShapes.SingleTarget;
-        public bool IsTerminal => this.Phase is CursorMarkerPhases.Failed or CursorMarkerPhases.Completed;
+        public bool IsTerminal => this.Phase is CursorMarkerPhases.Failed or CursorMarkerPhases.Completed or CursorMarkerPhases.Unknown;
 
         public static CursorMarker LocalFailure(CompanionIdentity identity, string locationKey, Point first, Point second, string kind, string summary, int expiresAt) => new(identity, locationKey, first, second, kind, WorkScopeShapes.SingleTarget, string.Empty)
         {

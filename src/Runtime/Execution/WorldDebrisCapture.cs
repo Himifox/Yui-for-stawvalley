@@ -55,7 +55,16 @@ internal sealed class WorldDebrisCapture
         CompanionIdentity identity,
         CompanionInventoryStore inventories,
         GameLocation location,
-        IEnumerable<Debris> drops)
+        IEnumerable<Debris> drops) => RouteSpecificLocked(
+            location, drops,
+            output => inventories.StoreGeneratedOutput(identity, output),
+            output => inventories.ContainsGeneratedOutputExact(identity, output));
+
+    internal static WorldDebrisRouteResult RouteSpecificLocked(
+        GameLocation location,
+        IEnumerable<Debris> drops,
+        Func<Item, InventoryActionResult> store,
+        Func<Item, bool> isRetained)
     {
         int routed = 0;
         HashSet<Debris> visited = new(ReferenceEqualityComparer.Instance);
@@ -79,8 +88,20 @@ internal sealed class WorldDebrisCapture
                 continue;
             }
 
-            InventoryActionResult result = inventories.StoreGeneratedOutput(identity, output);
+            InventoryActionResult result;
+            try { result = store(output); }
+            catch (Exception ex)
+            {
+                // Inventory lookup can fail before StoreGeneratedOutput enters its own guard.
+                // Convert that fault so the detached drop and other extracted outputs survive.
+                result = InventoryActionResult.Failure("WORLD-OUTPUT-ROUTING-FAILED", $"World output routing failed: {ex.GetType().Name}.");
+            }
             bool retained = result.IsSuccess || result.Code == "OUTPUT-IN-RECOVERY";
+            if (!retained)
+            {
+                try { retained = isRetained(output); }
+                catch { /* A failed lookup supplies no evidence of a completed transfer. */ }
+            }
             if (retained)
             {
                 routed++;
