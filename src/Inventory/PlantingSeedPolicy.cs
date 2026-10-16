@@ -218,7 +218,7 @@ internal sealed class PlantingPreviewService
         PlantSeedPolicyResult policy = PlantSeedPolicy.Evaluate(current.Example, location);
         if (!policy.IsAllowed || policy.CropData is null)
             return PlantingPreviewResult.Failure(policy.Code, policy.Message);
-        PlantSlotPreview[] slots = CaptureSlots(owner, location, scope, current.Example.ItemId, policy.CropData);
+        PlantSlotPreview[] slots = CaptureSlots(owner, location, scope, current.Example.ItemId, policy.CropData, this.GetBody(identity, location));
         bool sufficient = slots.Length >= count;
         return new PlantingPreviewResult(
             sufficient,
@@ -270,11 +270,11 @@ internal sealed class PlantingPreviewService
         return sources;
     }
 
-    public PlantSlotPreview[] CaptureEligibleSlots(Farmer owner, GameLocation location, PlantingScope scope, Item seed)
+    public PlantSlotPreview[] CaptureEligibleSlots(CompanionIdentity identity, Farmer owner, GameLocation location, PlantingScope scope, Item seed)
     {
         PlantSeedPolicyResult policy = PlantSeedPolicy.Evaluate(seed, location);
         return policy.IsAllowed && policy.CropData is not null
-            ? CaptureSlots(owner, location, scope, seed.ItemId, policy.CropData)
+            ? CaptureSlots(owner, location, scope, seed.ItemId, policy.CropData, this.GetBody(identity, location))
             : Array.Empty<PlantSlotPreview>();
     }
 
@@ -282,7 +282,7 @@ internal sealed class PlantingPreviewService
     {
         string optionId = Guid.NewGuid().ToString("N");
         DateTimeOffset expiresAt = now + PlantingConstants.OptionLifetime;
-        bool plantable = HasAnyPlantableSlot(location, supply.Example.ItemId, supply.CropData);
+        bool plantable = HasAnyPlantableSlot(location, supply.Example.ItemId, supply.CropData, this.GetBody(identity, location));
         this.options[optionId] = new CachedSeedOption(
             identity,
             this.sessionToken,
@@ -370,22 +370,25 @@ internal sealed class PlantingPreviewService
         && !item.modData.ContainsKey(CompanionInventoryStore.PlantingIdTag)
         && PlantSeedPolicy.Evaluate(item, location).IsAllowed;
 
-    private static bool HasAnyPlantableSlot(GameLocation location, string seedItemId, CropData cropData)
+    private NPC? GetBody(CompanionIdentity identity, GameLocation location) =>
+        this.bodies.TryGetBody(identity, out NPC body) && ReferenceEquals(body.currentLocation, location) ? body : null;
+
+    private static bool HasAnyPlantableSlot(GameLocation location, string seedItemId, CropData cropData, NPC? movingBody)
     {
         foreach ((Vector2 tile, TerrainFeature feature) in location.terrainFeatures.Pairs)
         {
-            if (feature is HoeDirt dirt && IsEligibleSlot(location, tile, dirt, seedItemId, cropData))
+            if (feature is HoeDirt dirt && IsEligibleSlot(location, tile, dirt, seedItemId, cropData, movingBody))
                 return true;
         }
         return false;
     }
 
-    private static PlantSlotPreview[] CaptureSlots(Farmer owner, GameLocation location, PlantingScope scope, string seedItemId, CropData cropData)
+    private static PlantSlotPreview[] CaptureSlots(Farmer owner, GameLocation location, PlantingScope scope, string seedItemId, CropData cropData, NPC? movingBody)
     {
         return location.terrainFeatures.Pairs
             .Where(pair => pair.Value is HoeDirt dirt
                 && scope.Contains((int)pair.Key.X, (int)pair.Key.Y)
-                && IsEligibleSlot(location, pair.Key, dirt, seedItemId, cropData))
+                && IsEligibleSlot(location, pair.Key, dirt, seedItemId, cropData, movingBody))
             .Select(pair => new PlantSlotPreview(
                 $"{(int)pair.Key.X},{(int)pair.Key.Y}:plant-slot",
                 (int)pair.Key.X,
@@ -398,26 +401,36 @@ internal sealed class PlantingPreviewService
             .ToArray();
     }
 
-    private static bool IsEligibleSlot(GameLocation location, Vector2 tile, HoeDirt dirt, string seedItemId, CropData cropData)
+    private static bool IsEligibleSlot(GameLocation location, Vector2 tile, HoeDirt dirt, string seedItemId, CropData cropData, NPC? movingBody = null) =>
+        IsPlantableTarget(location, tile, dirt, seedItemId, cropData, movingBody) && HasOpenApproach(location, tile, movingBody);
+
+    internal static bool IsPlantableTarget(GameLocation location, Vector2 tile, HoeDirt dirt, string seedItemId, CropData cropData, NPC? movingBody = null)
     {
         if (dirt.crop is not null || location.Objects.ContainsKey(tile))
             return false;
-        if (location.characters.Any(character => character.Tile == tile)
+        // Our own body can move to the cardinal approach before settlement. It must
+        // not reduce the area's capacity; every other actor remains an obstacle.
+        if (location.characters.Any(character => !ReferenceEquals(character, movingBody) && character.Tile == tile)
             || location.farmers.Any(farmer => farmer.Tile == tile))
             return false;
         if (location.IsOutdoors && !location.SeedsIgnoreSeasonsHere() && cropData.Seasons.Count > 0 && !cropData.Seasons.Contains(location.GetSeason()))
             return false;
         if (!location.CanPlantSeedsHere(seedItemId, (int)tile.X, (int)tile.Y, false, out _))
             return false;
-        return HasOpenApproach(location, tile);
+        return true;
     }
 
-    private static bool HasOpenApproach(GameLocation location, Vector2 tile)
+    private static bool HasOpenApproach(GameLocation location, Vector2 tile, NPC? movingBody)
     {
         Vector2[] directions = { new(1, 0), new(-1, 0), new(0, 1), new(0, -1) };
         return directions.Select(direction => tile + direction).Any(candidate =>
             location.isTileOnMap(candidate)
-            && !location.IsTileBlockedBy(candidate));
+            && (!location.IsTileBlockedBy(candidate)
+                || (movingBody is not null && movingBody.Tile == candidate
+                    && !location.characters.Any(character => !ReferenceEquals(character, movingBody)
+                        && character.GetBoundingBox().Intersects(new Rectangle((int)candidate.X * Game1.tileSize, (int)candidate.Y * Game1.tileSize, Game1.tileSize, Game1.tileSize)))
+                    && !location.IsTileBlockedBy(candidate, CollisionMask.All & ~CollisionMask.Characters)
+                    && CompanionPathing.IsStandable(movingBody, location, candidate))));
     }
 
     private void Prune(DateTimeOffset now)
