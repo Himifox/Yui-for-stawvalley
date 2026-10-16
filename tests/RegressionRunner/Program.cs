@@ -40,6 +40,7 @@ internal static class Program
     {
         NetworkRegressionTests.Run();
         CompanionRegressionTests.Run();
+        SaveRegressionTests.Run();
         InventoryRegressionTests.Run();
         WorkRegressionTests.Run();
     }
