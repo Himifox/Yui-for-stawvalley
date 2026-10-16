@@ -1,6 +1,7 @@
 <div align="center">
 
 # Yui to Issho! — Farm Days Together
+<img width="463" height="355" alt="image" src="https://github.com/user-attachments/assets/56db3509-5323-4236-8b60-4a137abf9021" />
 
 **陪你生活、交谈，并在劳动时搭把手的《星露谷物语》农场伙伴。**
 
