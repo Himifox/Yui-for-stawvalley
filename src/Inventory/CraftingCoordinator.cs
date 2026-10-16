@@ -169,7 +169,7 @@ internal sealed class CraftingCoordinator
         foreach (CompanionRecord record in this.registry.All.Where(record => record.CraftTransaction is not null))
         {
             CraftTransactionRecord craft = record.CraftTransaction!;
-            if (CraftPhases.OwnsResponsibility(craft.Phase) && craft.OutputToken is null)
+            if (CraftPhases.OwnsResponsibility(craft.Phase) && craft.OutputToken is null && !HasConflictingTransaction(record, craft))
             {
                 craft.Phase = CraftPhases.ReturningMaterials;
                 craft.LastFailure = "RECOVERED-WITHOUT-RUNTIME-SOURCE-REFERENCES";
@@ -212,6 +212,8 @@ internal sealed class CraftingCoordinator
             return CraftActionResult.Success("CRAFT-IDLE", "There is no active crafting responsibility to cancel.");
         if (!CraftPhases.CanCancel(record.CraftTransaction.Phase))
             return CraftActionResult.Failure("CRAFT-COMMIT-BOUNDARY", "The output already exists; this craft must reconcile instead of being cancelled.");
+        if (HasConflictingTransaction(record, record.CraftTransaction))
+            return CraftActionResult.Failure("COMPANION-BUSY", "Another task is using the Yui bag; retry the material return after that task finishes.");
         if (this.chestSessions.TryGetValue(identity, out ChestCraftSession? session))
         {
             this.FailChestSession(session, "PLAYER-CANCELLED");
@@ -325,7 +327,7 @@ internal sealed class CraftingCoordinator
                 {
                     transaction.Phase = CraftPhases.Faulted;
                     transaction.LastFailure = routed.Code;
-                    record.ActiveTransactionId = null;
+                    ReleaseCraftGate(record, transaction);
                     return CraftActionResult.Failure("CRAFT-OUTPUT-UNKNOWN", $"Output {child + 1} could not prove a unique responsibility location; crafting is faulted.");
                 }
                 transaction.OutputToken = outputToken;
@@ -336,18 +338,18 @@ internal sealed class CraftingCoordinator
                 this.appearance.Commit(identity, transaction.OperationId);
             }
 
-            escrow.Clear();
+            ConsumeAllEscrow(escrow, transaction);
             transaction.Phase = CraftPhases.MaterialsConsumed;
             ApplyOwnerProgress(owner, transaction);
             if (!this.TryReleaseOutputResponsibility(identity, transaction, out string releaseFailure))
             {
                 transaction.Phase = CraftPhases.Reconciling;
                 transaction.LastFailure = releaseFailure;
-                record.ActiveTransactionId = null;
+                ReleaseCraftGate(record, transaction);
                 return CraftActionResult.Failure("CRAFT-OUTPUT-RECONCILE", "Craft output exists, but its terminal responsibility tags could not be released safely.");
             }
             transaction.Phase = CraftPhases.Completed;
-            record.ActiveTransactionId = null;
+            ReleaseCraftGate(record, transaction);
             TaskReceiptStore.Add(record, transaction.OperationId, true, "CRAFT-COMPLETED", $"Crafted {transaction.RecipeKey} {transaction.CompletedCount}/{transaction.CraftCount}; outputs ended in {lastLocation}.");
             record.CraftTransaction = null;
             return CraftActionResult.Success("CRAFT-COMPLETED", $"Crafted {transaction.RecipeKey} {transaction.CompletedCount}/{transaction.CraftCount}; output={transaction.OutputLocation}.");
@@ -358,7 +360,7 @@ internal sealed class CraftingCoordinator
             {
                 RollBackBagReservations(bag, escrow, reservations);
                 record.CraftTransaction = null;
-                record.ActiveTransactionId = null;
+                ReleaseCraftGate(record, transaction);
                 TaskReceiptStore.Add(record, transaction.OperationId, false, "CRAFT-ROLLED-BACK", "Craft stopped before output creation and the exact reserved materials were restored.");
                 return CraftActionResult.Failure("CRAFT-ROLLED-BACK", $"Craft stopped before output creation and materials were restored: {ex.GetType().Name}.");
             }
@@ -367,7 +369,7 @@ internal sealed class CraftingCoordinator
                 return CraftActionResult.Failure("CRAFT-PARTIAL", $"Crafted {transaction.CompletedCount}/{transaction.CraftCount}; later child creation stopped safely.");
             transaction.Phase = CraftPhases.Faulted;
             transaction.LastFailure = ex.GetType().Name;
-            record.ActiveTransactionId = null;
+            ReleaseCraftGate(record, transaction);
             return CraftActionResult.Failure("CRAFT-FAULTED", "Output exists but final reconciliation stopped; the persisted transaction prevents duplicate output.");
         }
     }
@@ -616,18 +618,18 @@ internal sealed class CraftingCoordinator
                 return CraftActionResult.Failure("CRAFT-PARTIAL", $"Crafted {transaction.CompletedCount}/{transaction.CraftCount}; later child creation stopped safely.");
             return this.Fault(session, "CRAFT-CREATE-FAILED", $"Output creation stopped before any proven child output: {ex.GetType().Name}.");
         }
-        escrow.Clear();
+        ConsumeAllEscrow(escrow, transaction);
         transaction.Phase = CraftPhases.MaterialsConsumed;
         ApplyOwnerProgress(session.Owner, transaction);
         if (!this.TryReleaseOutputResponsibility(session.Record.Identity, transaction, out string releaseFailure))
         {
             transaction.Phase = CraftPhases.Reconciling;
             transaction.LastFailure = releaseFailure;
-            session.Record.ActiveTransactionId = null;
+            ReleaseCraftGate(session.Record, transaction);
             return CraftActionResult.Failure("CRAFT-OUTPUT-RECONCILE", "Craft output exists, but its terminal responsibility tags could not be released safely.");
         }
         transaction.Phase = CraftPhases.Completed;
-        session.Record.ActiveTransactionId = null;
+        ReleaseCraftGate(session.Record, transaction);
         TaskReceiptStore.Add(session.Record, transaction.OperationId, true, "CRAFT-COMPLETED", $"Crafted {transaction.RecipeKey} {transaction.CompletedCount}/{transaction.CraftCount}; output={lastLocation}.");
         session.Record.CraftTransaction = null;
         return CraftActionResult.Success("CRAFT-COMPLETED", $"Crafted {transaction.RecipeKey} {transaction.CompletedCount}/{transaction.CraftCount}; output={lastLocation}.");
@@ -640,7 +642,7 @@ internal sealed class CraftingCoordinator
         this.chestSessions.Remove(session.Record.Identity);
         session.Transaction.Phase = CraftPhases.ReturningMaterials;
         session.Transaction.LastFailure = reason;
-        session.Record.ActiveTransactionId = null;
+        ReleaseCraftGate(session.Record, session.Transaction);
         NetMutex bagMutex = Game1.player.team.GetOrCreateGlobalInventoryMutex(CompanionInventoryStore.GetNamespace(session.Record.Identity));
         if (bagMutex.IsLockHeld())
             this.ReturnEscrowToBag(session.Record, session.Transaction, reason);
@@ -653,16 +655,29 @@ internal sealed class CraftingCoordinator
     {
         if (!this.IsCurrentTransaction(record, transaction) || transaction.OutputToken is not null || !CraftPhases.CanCancel(transaction.Phase))
             return InventoryActionResult.Failure("CRAFT-RETURN-STALE", "The original pre-output craft is no longer current; no materials moved.");
-        if (!this.MoveEscrowToBag(record.Identity))
+        if (HasConflictingTransaction(record, transaction))
+            return InventoryActionResult.Failure("COMPANION-BUSY", "Another task acquired the companion before the bag lock; reserved materials remain unchanged.");
+        if (!this.MoveEscrowToBag(record.Identity, transaction))
         {
-            transaction.Phase = CraftPhases.Faulted;
+            transaction.Phase = CraftPhases.ReturningMaterials;
             transaction.LastFailure = $"{reason}:RETURN-BAG-FULL";
-            return InventoryActionResult.Failure("CRAFT-RETURN-BAG-FULL", "The bag is full; remaining materials are retained in Craft Escrow and the transaction is faulted.");
+            ReleaseCraftGate(record, transaction);
+            return InventoryActionResult.Failure("CRAFT-RETURN-BAG-FULL", "The bag is full; remaining materials are retained in Craft Escrow and cancellation can be retried after freeing space.");
         }
         TaskReceiptStore.Add(record, transaction.OperationId, false, "CRAFT-CANCELLED", $"Craft stopped before output creation; real materials were retained in the Yui bag ({reason}).");
         record.CraftTransaction = null;
-        record.ActiveTransactionId = null;
+        ReleaseCraftGate(record, transaction);
         return InventoryActionResult.Success("CRAFT-CANCELLED", "Pre-output craft materials were returned to the Yui bag.");
+    }
+
+    private static bool HasConflictingTransaction(CompanionRecord record, CraftTransactionRecord transaction) =>
+        !string.IsNullOrWhiteSpace(record.ActiveTransactionId)
+        && record.ActiveTransactionId != $"craft:{transaction.CraftId}";
+
+    private static void ReleaseCraftGate(CompanionRecord record, CraftTransactionRecord transaction)
+    {
+        if (record.ActiveTransactionId == $"craft:{transaction.CraftId}")
+            record.ActiveTransactionId = null;
     }
 
     private bool IsCurrentTransaction(CompanionRecord record, CraftTransactionRecord transaction) =>
@@ -676,7 +691,7 @@ internal sealed class CraftingCoordinator
         && this.IsCurrentTransaction(session.Record, session.Transaction)
         && session.Record.ActiveTransactionId == $"craft:{session.Transaction.CraftId}";
 
-    private bool MoveEscrowToBag(CompanionIdentity identity)
+    private bool MoveEscrowToBag(CompanionIdentity identity, CraftTransactionRecord transaction)
     {
         Inventory bag = this.inventories.Get(identity);
         Inventory escrow = this.inventories.GetCraftEscrow(identity);
@@ -685,25 +700,83 @@ internal sealed class CraftingCoordinator
             Item? merge = bag.FirstOrDefault(candidate => candidate is not null && IsUnreservedMaterial(candidate) && CanMergeCraft(candidate, item));
             if (merge is not null)
             {
+                CraftSourceRecord source = FindEscrowSource(transaction, item);
                 merge.Stack += item.Stack;
                 escrow.Remove(item);
+                source.Acquired = false;
             }
             else if (this.inventories.Count(identity) < CompanionInventoryStore.Capacity)
             {
-                item.modData.Remove(CompanionInventoryStore.CraftIdTag);
-                item.modData.Remove(CompanionInventoryStore.CraftSourceTag);
+                CraftSourceRecord source = FindEscrowSource(transaction, item);
                 bag.Add(item);
                 escrow.Remove(item);
+                item.modData.Remove(CompanionInventoryStore.CraftIdTag);
+                item.modData.Remove(CompanionInventoryStore.CraftSourceTag);
+                source.Acquired = false;
             }
         }
         return !escrow.Any(item => item is not null);
+    }
+
+    private static CraftSourceRecord FindEscrowSource(CraftTransactionRecord transaction, Item item)
+    {
+        // Plans identify material by fingerprint rather than source token.
+        // Equal source stacks are interchangeable once acquisition has stopped.
+        return transaction.SourcePlan
+            .Where(source => source.Acquired && source.QualifiedItemId == item.QualifiedItemId
+                && source.ItemFingerprint == Fingerprint(item) && source.Quantity >= item.Stack)
+            .OrderBy(source => source.Quantity)
+            .First();
+    }
+
+    private static void ConsumeAllEscrow(Inventory escrow, CraftTransactionRecord transaction)
+    {
+        escrow.Clear();
+        foreach (CraftSourceRecord source in transaction.SourcePlan)
+            source.Acquired = false;
+    }
+
+    internal static bool TryRecoverLegacyReturnLedger(CompanionRecord record, Inventory escrow)
+    {
+        CraftTransactionRecord transaction = record.CraftTransaction!;
+        if (transaction.Phase != CraftPhases.Faulted
+            || transaction.LastFailure?.EndsWith(":RETURN-BAG-FULL", StringComparison.Ordinal) != true
+            || transaction.OutputToken is not null || transaction.OutputTokens.Count != 0
+            || transaction.CompletedCount != 0 || transaction.ProgressApplied || transaction.OutputLocation is not null
+            || escrow.Count == 0
+            || transaction.SourcePlan.Count(source => source.Acquired) <= escrow.Count)
+            return false;
+
+        // Older cancellation code returned real stacks without clearing Acquired.
+        // Repair only that pre-output state, and only after every remaining exact
+        // material stack is accounted for. No real Item is created or moved here.
+        var matchedSources = new HashSet<CraftSourceRecord>();
+        var sourceTokens = new HashSet<string>(StringComparer.Ordinal);
+        foreach (Item item in escrow)
+        {
+            if (item.modData.GetValueOrDefault(CompanionInventoryStore.CraftIdTag) != transaction.CraftId
+                || !item.modData.TryGetValue(CompanionInventoryStore.CraftSourceTag, out string? token)
+                || !Guid.TryParseExact(token, "N", out _) || !sourceTokens.Add(token))
+                return false;
+            CraftSourceRecord? source = transaction.SourcePlan.FirstOrDefault(source => source.Acquired
+                && !matchedSources.Contains(source) && source.Quantity == item.Stack
+                && source.QualifiedItemId == item.QualifiedItemId && source.ItemFingerprint == Fingerprint(item));
+            if (source is null)
+                return false;
+            matchedSources.Add(source);
+        }
+        foreach (CraftSourceRecord source in transaction.SourcePlan.Where(source => source.Acquired && !matchedSources.Contains(source)))
+            source.Acquired = false;
+        transaction.Phase = CraftPhases.ReturningMaterials;
+        ReleaseCraftGate(record, transaction);
+        return true;
     }
 
     private CraftActionResult Fault(ChestCraftSession session, string code, string message)
     {
         session.Transaction.Phase = CraftPhases.Faulted;
         session.Transaction.LastFailure = code;
-        session.Record.ActiveTransactionId = null;
+        ReleaseCraftGate(session.Record, session.Transaction);
         this.chestSessions.Remove(session.Record.Identity);
         return CraftActionResult.Failure(code, message);
     }
@@ -830,8 +903,8 @@ internal sealed class CraftingCoordinator
     private bool TryCompletePartial(CompanionRecord record, Farmer owner, CraftTransactionRecord transaction, string failure)
     {
         Inventory escrow = this.inventories.GetCraftEscrow(record.Identity);
-        if (!ConsumeMaterials(escrow, transaction.RecipeSnapshot.Ingredients, transaction.CompletedCount)
-            || !this.MoveEscrowToBag(record.Identity))
+        if (!ConsumeMaterials(escrow, transaction)
+            || !this.MoveEscrowToBag(record.Identity, transaction))
             return false;
         transaction.Phase = CraftPhases.MaterialsConsumed;
         if (!transaction.ProgressApplied)
@@ -843,13 +916,13 @@ internal sealed class CraftingCoordinator
             return false;
         }
         transaction.LastFailure = failure;
-        record.ActiveTransactionId = null;
+        ReleaseCraftGate(record, transaction);
         TaskReceiptStore.Add(record, transaction.OperationId, false, "CRAFT-PARTIAL", $"Crafted {transaction.CompletedCount}/{transaction.CraftCount}; unused real materials returned after {failure}.");
         record.CraftTransaction = null;
         return true;
     }
 
-    private static bool ConsumeMaterials(Inventory escrow, IReadOnlyList<CraftIngredientRecord> ingredients, int count)
+    private static bool ConsumeMaterials(Inventory escrow, CraftTransactionRecord transaction)
     {
         Item[] items = escrow.Where(item => item is not null).ToArray();
         var available = new Dictionary<Item, int>(ReferenceEqualityComparer.Instance);
@@ -859,9 +932,9 @@ internal sealed class CraftingCoordinator
             available[item] = item.Stack;
             consumeByItem[item] = 0;
         }
-        foreach (CraftIngredientRecord ingredient in ingredients)
+        foreach (CraftIngredientRecord ingredient in transaction.RecipeSnapshot.Ingredients)
         {
-            int remaining = checked(ingredient.RequiredPerCraft * count);
+            int remaining = checked(ingredient.RequiredPerCraft * transaction.CompletedCount);
             foreach (Item item in items.Where(item => CraftingRecipePolicy.Matches(item, ingredient.IngredientId)))
             {
                 int consume = Math.Min(remaining, available[item]);
@@ -875,9 +948,13 @@ internal sealed class CraftingCoordinator
         }
         foreach ((Item item, int consume) in consumeByItem.Where(pair => pair.Value > 0))
         {
+            CraftSourceRecord? source = consume == item.Stack ? FindEscrowSource(transaction, item) : null;
             item.Stack -= consume;
             if (item.Stack == 0)
+            {
                 escrow.Remove(item);
+                source!.Acquired = false;
+            }
         }
         return true;
     }
@@ -891,7 +968,7 @@ internal sealed class CraftingCoordinator
         {
             transaction.Phase = CraftPhases.Faulted;
             transaction.LastFailure = "CRAFT-OUTPUT-TOKEN-MISMATCH";
-            record.ActiveTransactionId = null;
+            ReleaseCraftGate(record, transaction);
             return;
         }
         Farmer? owner = Game1.GetPlayer(record.OwnerId, onlyOnline: true);
@@ -899,7 +976,7 @@ internal sealed class CraftingCoordinator
         {
             transaction.Phase = CraftPhases.Reconciling;
             transaction.LastFailure = "OWNER-OFFLINE";
-            record.ActiveTransactionId = null;
+            ReleaseCraftGate(record, transaction);
             return;
         }
         if (!this.reconciliationPending.Add(record.Identity))
@@ -908,7 +985,7 @@ internal sealed class CraftingCoordinator
         {
             if (record.CraftTransaction != transaction || this.inventories.CountCraftOutputs(record.Identity, transaction.OutputTokens) != transaction.OutputTokens.Count)
                 return InventoryActionResult.Failure("CRAFT-RECONCILE-CHANGED", "Persisted output responsibility changed before locked reconciliation.");
-            this.inventories.GetCraftEscrow(record.Identity).Clear();
+            ConsumeAllEscrow(this.inventories.GetCraftEscrow(record.Identity), transaction);
             transaction.Phase = CraftPhases.MaterialsConsumed;
             if (!transaction.ProgressApplied)
                 ApplyOwnerProgress(owner, transaction);
@@ -916,11 +993,11 @@ internal sealed class CraftingCoordinator
             {
                 transaction.Phase = CraftPhases.Reconciling;
                 transaction.LastFailure = releaseFailure;
-                record.ActiveTransactionId = null;
+                ReleaseCraftGate(record, transaction);
                 return InventoryActionResult.Failure("CRAFT-OUTPUT-RECONCILE", "Persisted craft output responsibility could not be released safely.");
             }
             transaction.Phase = CraftPhases.Completed;
-            record.ActiveTransactionId = null;
+            ReleaseCraftGate(record, transaction);
             TaskReceiptStore.Add(record, transaction.OperationId, true, "CRAFT-RECONCILED", $"Reconciled {transaction.RecipeKey} {transaction.CompletedCount}/{transaction.CraftCount} from persisted OutputTokens.");
             record.CraftTransaction = null;
             return InventoryActionResult.Success("CRAFT-RECONCILED", "Persisted crafting output, materials, and Owner progress now agree.");

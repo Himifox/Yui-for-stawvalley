@@ -199,7 +199,10 @@ internal sealed class CompanionInventoryStore
             }
             if (record.CraftTransaction is not null
                 && record.CraftTransaction.SourcePlan.Count(source => source.Acquired) != craftEscrow.Count(item => item is not null))
-                return InventoryValidationResult.Failure("CRAFT-ESCROW-MISMATCH", $"{record.Identity} Craft Escrow does not match its acquired source ledger.");
+            {
+                if (!CraftingCoordinator.TryRecoverLegacyReturnLedger(record, craftEscrow))
+                    return InventoryValidationResult.Failure("CRAFT-ESCROW-MISMATCH", $"{record.Identity} Craft Escrow does not match its acquired source ledger.");
+            }
 
             Inventory plantEscrow = this.GetPlantEscrow(record.Identity);
             Dictionary<string, Item> plantItemsBySource = new(StringComparer.Ordinal);

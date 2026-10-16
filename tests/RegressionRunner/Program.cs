@@ -42,6 +42,7 @@ internal static class Program
         CompanionRegressionTests.Run();
         SaveRegressionTests.Run();
         InventoryRegressionTests.Run();
+        CraftingSettlementRegressionTests.Run();
         WorkRegressionTests.Run();
     }
 }
