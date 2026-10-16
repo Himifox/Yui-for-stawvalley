@@ -214,7 +214,7 @@ internal sealed class PlantingCoordinator
             }
             if (runtime.Transaction.Phase is PlantingPhases.ReturningSeeds or PlantingPhases.Cancelling)
                 this.UpdateReturning(runtime);
-            else if (runtime.Transaction.SourcePlan.Any(source => source.AcquiredQuantity < source.Quantity))
+            else if (runtime.Transaction.Phase is PlantingPhases.Planned or PlantingPhases.AcquiringSeeds)
                 this.UpdateAcquisition(runtime);
             else if (runtime.Transaction.Phase is PlantingPhases.SeedsEscrowed or PlantingPhases.Planting)
                 this.UpdatePlanting(runtime);
@@ -270,38 +270,40 @@ internal sealed class PlantingCoordinator
 
     private void BeginBagAcquisition(PlantingRuntime runtime)
     {
-        if (runtime.BagRequestPending)
+        if (!this.IsAcquiringSeeds(runtime) || runtime.BagRequestPending)
             return;
         runtime.BagRequestPending = true;
-        this.inventories.RequestTransfer(runtime.Identity, () =>
-        {
-            if (!this.IsCurrent(runtime))
-                return InventoryActionResult.Failure("PLANT-TRANSACTION-STALE", "Planting changed before bag acquisition.");
-            if (!OwnerLifecycleGate.CanAdvance(runtime.Owner))
-                return InventoryActionResult.Failure("OWNER-BUSY", "This Yui's Owner became busy before seed acquisition.");
-            try
-            {
-                foreach (PlantingRuntimeSource source in runtime.Sources
-                    .Where(source => source.Record.SourceKind == PlantingSourceKinds.Bag && source.Record.AcquiredQuantity == 0)
-                    .OrderByDescending(source => source.Record.SourceSlot))
-                    MoveToEscrow(runtime.Transaction.PlantingId, source, this.inventories.GetPlantEscrow(runtime.Identity));
-                runtime.Transaction.Phase = PlantingPhases.AcquiringSeeds;
-                runtime.Transaction.UpdatedTick = this.currentTick;
-                return InventoryActionResult.Success("PLANT-BAG-ACQUIRED", "Planned Yui-bag seed quantities moved into Plant Escrow.");
-            }
-            catch (Exception ex)
-            {
-                return InventoryActionResult.Failure("PLANT-BAG-SOURCE-CHANGED", $"A bag seed source changed before acquisition: {ex.GetType().Name}.");
-            }
-        }, result =>
+        this.inventories.RequestTransfer(runtime.Identity, () => this.AcquireBagSources(runtime), result =>
         {
             runtime.BagRequestPending = false;
-            if (!this.IsCurrent(runtime))
+            if (!this.IsAcquiringSeeds(runtime))
                 return;
             runtime.BagAcquired = result.IsSuccess;
             if (!result.IsSuccess && result.Code != "OWNER-BUSY")
                 this.BeginReturning(runtime, result.Code);
         });
+    }
+
+    private InventoryActionResult AcquireBagSources(PlantingRuntime runtime)
+    {
+        if (!this.IsAcquiringSeeds(runtime))
+            return InventoryActionResult.Failure("PLANT-TRANSACTION-STALE", "Planting changed before bag acquisition.");
+        if (!OwnerLifecycleGate.CanAdvance(runtime.Owner))
+            return InventoryActionResult.Failure("OWNER-BUSY", "This Yui's Owner became busy before seed acquisition.");
+        try
+        {
+            foreach (PlantingRuntimeSource source in runtime.Sources
+                .Where(source => source.Record.SourceKind == PlantingSourceKinds.Bag && source.Record.AcquiredQuantity == 0)
+                .OrderByDescending(source => source.Record.SourceSlot))
+                MoveToEscrow(runtime.Transaction.PlantingId, source, this.inventories.GetPlantEscrow(runtime.Identity));
+            runtime.Transaction.Phase = PlantingPhases.AcquiringSeeds;
+            runtime.Transaction.UpdatedTick = this.currentTick;
+            return InventoryActionResult.Success("PLANT-BAG-ACQUIRED", "Planned Yui-bag seed quantities moved into Plant Escrow.");
+        }
+        catch (Exception ex)
+        {
+            return InventoryActionResult.Failure("PLANT-BAG-SOURCE-CHANGED", $"A bag seed source changed before acquisition: {ex.GetType().Name}.");
+        }
     }
 
     private void UpdateAcquisition(PlantingRuntime runtime)
@@ -358,6 +360,12 @@ internal sealed class PlantingCoordinator
         NetMutex chestMutex = access.Chest.GetMutex();
         chestMutex.RequestLock(() =>
         {
+            if (!this.IsAcquiringSeeds(runtime))
+            {
+                runtime.LockPending = false;
+                chestMutex.ReleaseLock();
+                return;
+            }
             NetMutex bagMutex = Game1.player.team.GetOrCreateGlobalInventoryMutex(CompanionInventoryStore.GetNamespace(runtime.Identity));
             bagMutex.RequestLock(() =>
             {
@@ -366,7 +374,7 @@ internal sealed class PlantingCoordinator
                 {
                     if (!OwnerLifecycleGate.CanAdvance(runtime.Owner))
                         failure = "OWNER-BUSY";
-                    else if (!this.IsCurrent(runtime) || !CompanionStorageCoordinator.IsCurrentCraftChest(access, runtime.Identity.OwnerId))
+                    else if (!this.IsAcquiringSeeds(runtime) || !CompanionStorageCoordinator.IsCurrentCraftChest(access, runtime.Identity.OwnerId))
                         failure = "PLANT-CHEST-SOURCE-CHANGED";
                     else
                         MoveToEscrow(runtime.Transaction.PlantingId, source, this.inventories.GetPlantEscrow(runtime.Identity));
@@ -381,6 +389,8 @@ internal sealed class PlantingCoordinator
                     bagMutex.ReleaseLock();
                     chestMutex.ReleaseLock();
                 }
+                if (!this.IsAcquiringSeeds(runtime))
+                    return;
                 if (failure is not null && failure != "OWNER-BUSY")
                     this.BeginReturning(runtime, failure);
                 else
@@ -389,12 +399,14 @@ internal sealed class PlantingCoordinator
             {
                 runtime.LockPending = false;
                 chestMutex.ReleaseLock();
-                this.BeginReturning(runtime, "PLANT-BAG-LOCK-FAILED");
+                if (this.IsAcquiringSeeds(runtime))
+                    this.BeginReturning(runtime, "PLANT-BAG-LOCK-FAILED");
             });
         }, () =>
         {
             runtime.LockPending = false;
-            this.BeginReturning(runtime, "PLANT-CHEST-LOCK-FAILED");
+            if (this.IsAcquiringSeeds(runtime))
+                this.BeginReturning(runtime, "PLANT-CHEST-LOCK-FAILED");
         });
     }
 
@@ -425,7 +437,7 @@ internal sealed class PlantingCoordinator
             return;
         }
         PlantingScope scope = Scope(runtime.Transaction);
-        PlantSlotPreview[] slots = this.preview.CaptureEligibleSlots(runtime.Owner, body.currentLocation, scope, seed);
+        PlantSlotPreview[] slots = this.preview.CaptureEligibleSlots(runtime.Identity, runtime.Owner, body.currentLocation, scope, seed);
         int remaining = runtime.Transaction.RequestedCount - runtime.Transaction.PlantedCount;
         if (slots.Length < remaining)
         {
@@ -539,6 +551,15 @@ internal sealed class PlantingCoordinator
         if (!policy.IsAllowed || policy.CropData is null)
         {
             this.FailTile(runtime, task, policy.Code, pause: true);
+            return;
+        }
+
+        // Capacity may include our own occupied tile, but a commit may not. Check
+        // again after navigation so actors, objects and season/rule changes cannot
+        // slip through the preview-to-settlement window.
+        if (!PlantingPreviewService.IsPlantableTarget(task.Location, task.TargetTile, dirt, seed.ItemId, policy.CropData))
+        {
+            this.FailTile(runtime, task, "PLANT-TARGET-NO-LONGER-ELIGIBLE", pause: true);
             return;
         }
 
@@ -917,6 +938,10 @@ internal sealed class PlantingCoordinator
         && ReferenceEquals(current, runtime)
         && runtime.Record.PlantingTransaction == runtime.Transaction
         && runtime.Record.ActiveTransactionId == runtime.Transaction.PlantingId;
+
+    private bool IsAcquiringSeeds(PlantingRuntime runtime) =>
+        this.IsCurrent(runtime)
+        && runtime.Transaction.Phase is PlantingPhases.Planned or PlantingPhases.AcquiringSeeds;
 
     private void DropRuntime(PlantingRuntime runtime)
     {

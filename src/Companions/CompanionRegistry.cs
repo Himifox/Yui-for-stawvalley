@@ -18,35 +18,38 @@ internal sealed class CompanionRegistry
 {
     private readonly Dictionary<CompanionIdentity, CompanionRecord> records = new();
     private readonly List<AuthorizedChestRecord> authorizedChests = new();
+    private readonly HashSet<long> removedOwnerIds = new();
 
     public bool CompanionIntroductionCompleted { get; private set; }
 
-    public int Count => this.records.Count;
+    public int Count => this.All.Count();
 
-    public IEnumerable<CompanionRecord> All => this.records.Values;
+    // Keep removed owners in snapshots without exposing their state to runtime recovery or mutations.
+    public IEnumerable<CompanionRecord> All => this.records.Values.Where(record => !this.removedOwnerIds.Contains(record.OwnerId));
 
-    public IEnumerable<CompanionRecord> Active => this.records.Values;
+    public IEnumerable<CompanionRecord> Active => this.All;
 
-    public IReadOnlyList<AuthorizedChestRecord> AuthorizedChests => this.authorizedChests;
+    public IReadOnlyList<AuthorizedChestRecord> AuthorizedChests => this.authorizedChests.Where(record => !this.removedOwnerIds.Contains(record.OwnerId)).ToArray();
 
     public void Clear()
     {
         this.records.Clear();
         this.authorizedChests.Clear();
+        this.removedOwnerIds.Clear();
         this.CompanionIntroductionCompleted = false;
     }
 
     public RegistryLoadResult Load(YuiToIsshoSaveData data, IReadOnlySet<long> knownOwnerIds)
     {
-        this.records.Clear();
-        this.authorizedChests.Clear();
+        this.Clear();
 
         if (data.SchemaVersion != YuiToIsshoSaveData.CurrentSchemaVersion)
             return RegistryLoadResult.Failure("UNMIGRATED-SCHEMA", $"Registry input must be migrated to schema {YuiToIsshoSaveData.CurrentSchemaVersion}; found {data.SchemaVersion}.");
 
         if (data.Companions is null)
             return RegistryLoadResult.Failure("INVALID-DATA", "The companion collection is missing.");
-        if (data.Companions.Count > CompanionGenerationPolicy.MaximumCompanions || data.Companions.Count > knownOwnerIds.Count)
+        int currentCount = data.Companions.Count(record => record is not null && knownOwnerIds.Contains(record.OwnerId));
+        if (currentCount > CompanionGenerationPolicy.MaximumCompanions || currentCount > knownOwnerIds.Count)
             return RegistryLoadResult.Failure("INVALID-COMPANION-COUNT", "The save contains more companions than this farm can own.");
         data.AuthorizedChests ??= new List<AuthorizedChestRecord>();
 
@@ -55,7 +58,7 @@ internal sealed class CompanionRegistry
         foreach (AuthorizedChestRecord authorization in data.AuthorizedChests)
         {
             if (authorization is null
-                || !knownOwnerIds.Contains(authorization.OwnerId)
+                || authorization.OwnerId <= 0
                 || string.IsNullOrWhiteSpace(authorization.LocationKey)
                 || authorization.LocationKey.Length > 256
                 || authorization.TileX < 0
@@ -72,8 +75,8 @@ internal sealed class CompanionRegistry
         {
             if (record is null)
                 return RegistryLoadResult.Failure("INVALID-IDENTITY", "The companion collection contains a null record.");
-            if (!CompanionGenerationPolicy.TryValidateIdentity(record.Identity, knownOwnerIds, out string identityFailure))
-                return RegistryLoadResult.Failure("INVALID-IDENTITY", identityFailure);
+            if (!record.Identity.IsCanonical)
+                return RegistryLoadResult.Failure("INVALID-IDENTITY", "The companion identity must use a positive OwnerId and canonical Slot 1.");
 
             CompanionIdentity identity = record.Identity;
             if (!loaded.TryAdd(identity, record))
@@ -242,15 +245,19 @@ internal sealed class CompanionRegistry
         foreach ((CompanionIdentity identity, CompanionRecord record) in loaded)
             this.records.Add(identity, record);
         this.authorizedChests.AddRange(data.AuthorizedChests);
+        this.removedOwnerIds.UnionWith(this.records.Values.Select(record => record.OwnerId)
+            .Concat(this.authorizedChests.Select(record => record.OwnerId))
+            .Where(ownerId => !knownOwnerIds.Contains(ownerId)));
         this.CompanionIntroductionCompleted = data.CompanionIntroductionCompleted || this.records.Count > 0;
 
-        return RegistryLoadResult.Success($"Loaded {this.records.Count} current companion record(s).");
+        return RegistryLoadResult.Success($"Loaded {this.Count} current companion record(s); retained {this.records.Count - this.Count} companion record(s) for removed owners.");
     }
 
     public CompanionRecord GetOrCreate(CompanionIdentity identity, StardewValley.Farmer owner)
     {
         if (!CompanionGenerationPolicy.TryValidateOwnerBinding(identity, owner, out string failure))
             throw new ArgumentOutOfRangeException(nameof(identity), failure);
+        this.removedOwnerIds.Remove(identity.OwnerId);
         if (!this.records.TryGetValue(identity, out CompanionRecord? record))
         {
             record = new CompanionRecord
@@ -265,12 +272,18 @@ internal sealed class CompanionRegistry
         return record;
     }
 
-    public bool TryGet(CompanionIdentity identity, out CompanionRecord record) => this.records.TryGetValue(identity, out record!);
+    public bool TryGet(CompanionIdentity identity, out CompanionRecord record)
+    {
+        record = null!;
+        return !this.removedOwnerIds.Contains(identity.OwnerId) && this.records.TryGetValue(identity, out record!);
+    }
 
     public void MarkCompanionIntroductionCompleted() => this.CompanionIntroductionCompleted = true;
 
     public DeleteResult Delete(CompanionIdentity identity)
     {
+        if (this.removedOwnerIds.Contains(identity.OwnerId))
+            return DeleteResult.Failure("OWNER-NOT-IN-FARM", "Removed-owner data is retained and cannot be deleted through the active registry.");
         if (!this.records.TryGetValue(identity, out CompanionRecord? record))
             return DeleteResult.Success("ALREADY-ABSENT", $"{identity} is already absent.");
 
