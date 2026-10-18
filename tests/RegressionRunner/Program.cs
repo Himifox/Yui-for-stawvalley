@@ -41,6 +41,7 @@ internal static class Program
         NetworkRegressionTests.Run();
         CompanionRegressionTests.Run();
         SaveRegressionTests.Run();
+        BridgeConfigRegressionTests.Run();
         InventoryRegressionTests.Run();
         PlantingRegressionTests.Run();
         CraftingSettlementRegressionTests.Run();

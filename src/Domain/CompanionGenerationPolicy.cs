@@ -35,7 +35,7 @@ internal static class CompanionGenerationPolicy
     {
         if (!identity.IsCanonical)
         {
-            failure = "The companion identity must use a positive OwnerId and canonical Slot 1.";
+            failure = "The companion identity must use a nonzero OwnerId and canonical Slot 1.";
             return false;
         }
         if (!knownOwnerIds.Contains(identity.OwnerId))
@@ -52,7 +52,7 @@ internal static class CompanionGenerationPolicy
     {
         if (!identity.IsCanonical)
         {
-            failure = "The companion identity must use a positive OwnerId and canonical Slot 1.";
+            failure = "The companion identity must use a nonzero OwnerId and canonical Slot 1.";
             return false;
         }
         if (owner is null || owner.UniqueMultiplayerID != identity.OwnerId)

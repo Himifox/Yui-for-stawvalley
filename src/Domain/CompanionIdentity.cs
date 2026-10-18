@@ -4,7 +4,8 @@ internal readonly record struct CompanionIdentity(long OwnerId, int Slot)
 {
     public const int CanonicalSlot = 1;
 
-    public bool IsCanonical => this.OwnerId > 0 && this.Slot == CanonicalSlot;
+    // Stardew's signed multiplayer IDs may be negative; only zero is unassigned.
+    public bool IsCanonical => this.OwnerId != 0 && this.Slot == CanonicalSlot;
 
     public static CompanionIdentity ForOwner(long ownerId) => new(ownerId, CanonicalSlot);
 
