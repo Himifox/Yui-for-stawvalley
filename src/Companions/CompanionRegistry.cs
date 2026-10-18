@@ -58,7 +58,7 @@ internal sealed class CompanionRegistry
         foreach (AuthorizedChestRecord authorization in data.AuthorizedChests)
         {
             if (authorization is null
-                || authorization.OwnerId <= 0
+                || authorization.OwnerId == 0
                 || string.IsNullOrWhiteSpace(authorization.LocationKey)
                 || authorization.LocationKey.Length > 256
                 || authorization.TileX < 0
@@ -76,7 +76,7 @@ internal sealed class CompanionRegistry
             if (record is null)
                 return RegistryLoadResult.Failure("INVALID-IDENTITY", "The companion collection contains a null record.");
             if (!record.Identity.IsCanonical)
-                return RegistryLoadResult.Failure("INVALID-IDENTITY", "The companion identity must use a positive OwnerId and canonical Slot 1.");
+                return RegistryLoadResult.Failure("INVALID-IDENTITY", "The companion identity must use a nonzero OwnerId and canonical Slot 1.");
 
             CompanionIdentity identity = record.Identity;
             if (!loaded.TryAdd(identity, record))

@@ -18,6 +18,7 @@ internal static class NetworkRegressionTests
             Require(!Validate("vitals-rest", seconds).IsSuccess, $"Rest should reject {seconds}s.");
 
         TimeoutRecovery();
+        SignedOwnerRequests();
         CursorTimeoutOutcomes();
         RejectInvalidMessageAsync(WebSocketMessageType.Binary, 1).GetAwaiter().GetResult();
         RejectInvalidMessageAsync(WebSocketMessageType.Text, 8193).GetAwaiter().GetResult();
@@ -42,6 +43,39 @@ internal static class NetworkRegressionTests
         if (command == "combat-guard")
             request.Fields["radius"] = "6";
         return MultiplayerRequestValidator.ValidateCommand(request, 1, epoch);
+    }
+
+    private static void SignedOwnerRequests()
+    {
+        string epoch = Guid.NewGuid().ToString("N");
+        foreach (long ownerId in new[] { -4899310317827733102L, -1L, long.MinValue, long.MaxValue })
+        {
+            var request = new CommandRequestDto
+            {
+                ProtocolVersion = MultiplayerProtocol.Version,
+                SessionEpoch = epoch,
+                RequestId = Guid.NewGuid().ToString("N"),
+                SenderPlayerId = ownerId,
+                OwnerId = ownerId,
+                Slot = CompanionIdentity.CanonicalSlot,
+                Sequence = 1,
+                Command = "follow",
+                Fields = new Dictionary<string, string>(),
+            };
+            Require(MultiplayerRequestValidator.ValidateCommand(request, ownerId, epoch).IsSuccess,
+                "Signed nonzero farmhand IDs must match their exact transport identity.");
+            Require(MultiplayerRequestValidator.ValidateCommand(request, 1, epoch).Code == "SENDER-MISMATCH",
+                "Accepting negative IDs must not allow transport sender spoofing.");
+            request.OwnerId = 1;
+            Require(MultiplayerRequestValidator.ValidateCommand(request, ownerId, epoch).Code == "NOT-OWNER",
+                "A negative-ID sender still may not control another owner's Yui.");
+            request.OwnerId = 0;
+            Require(MultiplayerRequestValidator.ValidateCommand(request, ownerId, epoch).Code == "NOT-OWNER",
+                "An unassigned owner ID must remain invalid.");
+            request.SenderPlayerId = 0;
+            Require(MultiplayerRequestValidator.ValidateCommand(request, 0, epoch).Code == "SENDER-MISMATCH",
+                "An unassigned sender ID must remain invalid.");
+        }
     }
 
     private static void TimeoutRecovery()

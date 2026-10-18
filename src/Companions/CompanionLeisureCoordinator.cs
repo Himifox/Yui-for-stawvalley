@@ -93,7 +93,7 @@ internal sealed class CompanionLeisureCoordinator
             return LeisureActionResult.Failure("NO-REACHABLE-SEAT", $"No free reachable seat was found within {(automatic ? AutomaticSearchRadius : ManualSearchRadius)} tiles.");
 
         string returnMode = record.Mode is CompanionModes.Follow or CompanionModes.Wait ? record.Mode : CompanionModes.Wait;
-        long syntheticId = this.AllocateSyntheticOccupantId();
+        long syntheticId = this.AllocateSyntheticOccupantId(Game1.getAllFarmers().Select(farmer => farmer.UniqueMultiplayerID));
         var state = new SeatRuntime(
             identity,
             choice.Value.Seat,
@@ -414,11 +414,18 @@ internal sealed class CompanionLeisureCoordinator
         return location.characters.Any(character => !ReferenceEquals(character, body) && character.GetBoundingBox().Intersects(bounds));
     }
 
-    private long AllocateSyntheticOccupantId()
+    internal long AllocateSyntheticOccupantId(IEnumerable<long> playerIds)
     {
-        while (this.nextSyntheticOccupantId >= 0 || this.IsSyntheticOccupant(this.nextSyntheticOccupantId))
-            this.nextSyntheticOccupantId++;
-        return this.nextSyntheticOccupantId++;
+        HashSet<long> reservedPlayerIds = playerIds.ToHashSet();
+        while (true)
+        {
+            if (this.nextSyntheticOccupantId >= 0)
+                this.nextSyntheticOccupantId = long.MinValue;
+            long candidate = this.nextSyntheticOccupantId++;
+            // Players and Yui reservations share the seat's sittingFarmers dictionary.
+            if (!reservedPlayerIds.Contains(candidate) && !this.IsSyntheticOccupant(candidate))
+                return candidate;
+        }
     }
 
     private static HashSet<int> GetOccupiedSeatIndices(ISittable seat, long? excludingPlayerId = null)

@@ -1,4 +1,7 @@
 using System.Text.Json;
+using System.Runtime.Serialization;
+using Netcode;
+using StardewValley;
 using YuiToIssho;
 
 internal static class SaveRegressionTests
@@ -9,6 +12,7 @@ internal static class SaveRegressionTests
         RemovedAuthorizationWithoutCompanion();
         HistoricalOwnersDoNotCountAgainstCurrentLimit();
         InvalidRecordsStillFail();
+        SignedOwnerIdsRoundTrip();
         Console.WriteLine("Save regressions passed (removed owners, retained data, rejoining, and validation guards).");
     }
 
@@ -19,6 +23,46 @@ internal static class SaveRegressionTests
         DisplayName = CompanionGenerationPolicy.DisplayName,
         WantsBody = true,
     };
+
+    private static void SignedOwnerIdsRoundTrip()
+    {
+        foreach (long ownerId in new[] { -4899310317827733102L, -1L, long.MinValue, long.MaxValue })
+        {
+            CompanionIdentity identity = CompanionIdentity.ForOwner(ownerId);
+            var known = new HashSet<long> { ownerId };
+            Assert.True(CompanionGenerationPolicy.TryValidateIdentity(identity, known, out string failure), failure);
+            Assert.True(!CompanionGenerationPolicy.TryValidateIdentity(identity, new HashSet<long> { 1 }, out _));
+            Assert.True(!new CompanionIdentity(ownerId, 2).IsCanonical);
+            var owner = (Farmer)FormatterServices.GetUninitializedObject(typeof(Farmer));
+            typeof(Farmer).GetField("uniqueMultiplayerID")!.SetValue(owner, new NetLong(ownerId));
+            var registry = new CompanionRegistry();
+            Assert.True(registry.Load(new YuiToIsshoSaveData(), known).IsSuccess);
+            CompanionRecord created = registry.GetOrCreate(identity, owner);
+            created.Bond.Points = 123;
+            AuthorizedChestRecord authorization = Authorization(ownerId);
+            authorization.TileX = 2;
+            YuiToIsshoSaveData snapshot = registry.CreateSnapshot();
+            snapshot.AuthorizedChests.Add(authorization);
+            snapshot = JsonSerializer.Deserialize<YuiToIsshoSaveData>(JsonSerializer.Serialize(snapshot))!;
+            Assert.Equal(ownerId, snapshot.Companions.Single().OwnerId);
+            Assert.Equal(ownerId, snapshot.AuthorizedChests.Single().OwnerId);
+            Assert.True(registry.Load(snapshot, known).IsSuccess);
+            Assert.True(registry.TryGet(identity, out CompanionRecord restored));
+            Assert.Equal(123, restored.Bond.Points);
+            Assert.Equal(ownerId, registry.AuthorizedChests.Single().OwnerId);
+            Assert.True(registry.Load(registry.CreateSnapshot(), new HashSet<long> { 1 }).IsSuccess);
+            Assert.Equal(0, registry.Count);
+            Assert.Equal(ownerId, registry.CreateSnapshot().Companions.Single().OwnerId);
+            Assert.True(registry.Load(registry.CreateSnapshot(), known).IsSuccess);
+            Assert.True(registry.TryGet(identity, out _));
+        }
+        Assert.True(!CompanionIdentity.ForOwner(0).IsCanonical);
+        var invalidAuthorization = Authorization(0);
+        Assert.Equal("INVALID-CHEST-AUTHORIZATION", new CompanionRegistry().Load(new YuiToIsshoSaveData
+        {
+            AuthorizedChests = new() { invalidAuthorization },
+        }, new HashSet<long> { 1 }).Code);
+    }
 
     private static AuthorizedChestRecord Authorization(long ownerId) => new()
     {

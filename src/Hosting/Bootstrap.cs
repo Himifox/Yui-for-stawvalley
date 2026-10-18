@@ -1,6 +1,5 @@
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
-using System.Security.Cryptography;
 using StardewModdingAPI;
 using StardewModdingAPI.Events;
 using StardewValley;
@@ -170,9 +169,17 @@ internal sealed class Bootstrap
         {
             if (string.IsNullOrWhiteSpace(config.NekoBridgeToken))
             {
-                config.NekoBridgeToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(24)).ToLowerInvariant();
-                helper.WriteConfig(config);
-                monitor.Log("Yui to Issho! generated a private local Agent Gateway key in config.json.", LogLevel.Info);
+                try
+                {
+                    (string token, bool generated) = NekoBridgeConfig.EnsurePrivateToken(Path.Combine(helper.DirectoryPath, "config.json"));
+                    config.NekoBridgeToken = token;
+                    if (generated)
+                        monitor.Log("Yui to Issho! generated a private local Agent Gateway key in config.json.", LogLevel.Info);
+                }
+                catch (Exception ex)
+                {
+                    monitor.Log($"HY-AGENT-GATEWAY-CONFIG: Could not safely save the private key; Gateway is disabled. {ex.GetType().Name}.", LogLevel.Error);
+                }
             }
             if (string.IsNullOrWhiteSpace(config.NekoBridgeToken) || config.NekoBridgeToken.Length is < 16 or > 256)
                 monitor.Log("HY-AGENT-GATEWAY-CONFIG: Gateway is disabled; token must be 16..256 characters.", LogLevel.Error);
@@ -325,7 +332,7 @@ internal sealed class Bootstrap
             }
             HashSet<long> knownOwnerIds = Game1.getAllFarmers()
                 .Select(farmer => farmer.UniqueMultiplayerID)
-                .Where(ownerId => ownerId > 0)
+                .Where(ownerId => ownerId != 0)
                 .ToHashSet();
             RegistryLoadResult result = this.registry.Load(data, knownOwnerIds);
             if (!result.IsSuccess)
